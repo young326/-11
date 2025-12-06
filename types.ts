@@ -1,9 +1,23 @@
+
 // Data models for the application
 
 export enum LinkType {
   Real = 'Real',
   Virtual = 'Virtual', // Dashed line
   Wavy = 'Wavy' // Usually implies wait/buffer, technically standard AOD uses dashed for virtual
+}
+
+export interface Annotation {
+  id: string;
+  type: 'text' | 'icon';
+  content: string; // text content or icon name
+  x: number;
+  y: number;
+  style?: {
+    color?: string;
+    fontSize?: number;
+    backgroundColor?: string;
+  };
 }
 
 export interface Task {
@@ -14,6 +28,7 @@ export interface Task {
   type: LinkType;
   zone?: string; // Partition/Zone
   description?: string;
+  parentId?: string; // For hierarchical grouping
   
   // Calculated fields for Critical Path Method (CPM)
   earlyStart?: number;
@@ -29,6 +44,7 @@ export interface Project {
   name: string;
   lastModified: number;
   tasks: Task[];
+  annotations?: Annotation[]; // Added annotations support
   description?: string;
 }
 

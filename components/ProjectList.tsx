@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { Project, Task } from '../types';
 import { FolderOpen, Plus, Save, FileText, Upload, Trash2 } from 'lucide-react';
 import { parseScheduleFromText } from '../services/geminiService';
+import * as XLSX from 'xlsx';
 
 interface ProjectListProps {
   projects: Project[];
@@ -32,14 +33,29 @@ const ProjectList: React.FC<ProjectListProps> = ({
 
     setIsLoading(true);
     try {
-      // In a real app, use appropriate libraries for .mpp, .xer, .pdf. 
-      // Here we simulate parsing by reading text/csv content for the AI.
-      // The AI is prompted to handle CSV/Excel/P6 text exports.
-      const text = await file.text();
+      let text = '';
+      
+      // Handle Excel files
+      if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+        const data = await file.arrayBuffer();
+        const workbook = XLSX.read(data);
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        // Convert to CSV string for AI to parse
+        text = XLSX.utils.sheet_to_csv(worksheet);
+      } else {
+        // Handle text based files (CSV, TXT, XML, etc.)
+        text = await file.text();
+      }
+
+      if (!text || text.trim().length === 0) {
+        throw new Error("文件内容为空");
+      }
+
       const tasks = await parseScheduleFromText(text);
       onImportProject(tasks);
     } catch (e) {
-      alert("导入文件出错。请确保是文本格式(CSV/TXT)或检查API Key。");
+      alert("导入文件出错。请确保文件格式正确或检查API Key。");
       console.error(e);
     } finally {
       setIsLoading(false);
@@ -69,7 +85,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
             ref={fileInputRef} 
             onChange={handleFileUpload}
             className="hidden" 
-            accept=".csv,.txt,.json,.xml,.mpp,.xer" // Broaden accept to imply support
+            accept=".csv,.txt,.json,.xml,.mpp,.xer,.xlsx,.xls" 
             title="支持 Excel, PDF, P6, Project, CSV 等格式"
           />
         </div>
