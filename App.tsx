@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Project, Task, LinkType, Annotation } from './types';
 import ProjectList from './components/ProjectList';
 import ScheduleTable from './components/ScheduleTable';
@@ -46,7 +46,6 @@ const App: React.FC = () => {
   };
 
   // --- State with History for Undo/Redo ---
-  // History stores the entire array of projects to be simple (though memory intensive for large apps)
   const [history, setHistory] = useState<Project[][]>([[initialProject]]);
   const [historyIndex, setHistoryIndex] = useState(0);
   
@@ -56,18 +55,86 @@ const App: React.FC = () => {
   // Layout State for 3 columns
   const [leftWidth, setLeftWidth] = useState(240); // Project List
   const [middleWidth, setMiddleWidth] = useState(400); // Schedule Table
-  // Right width is flex-1
   
   const [isLoading, setIsLoading] = useState(false);
   
-  // Analysis State
+  // Analysis State (calculated by NetworkDiagram)
   const [currentCriticalPath, setCurrentCriticalPath] = useState<string[]>([]);
   const [projectDuration, setProjectDuration] = useState(0);
+
+  // --- Shared Config ---
+  const projectStartDate = useMemo(() => {
+    const d = new Date();
+    d.setHours(0,0,0,0);
+    d.setDate(d.getDate() - 2); 
+    return d;
+  }, []);
 
   // --- Helpers ---
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0];
 
-  // Wrapper to update projects with history push
+  // Helper: Calculate CPM (Critical Path Method)
+  // We perform this here so the ScheduleTable can display calculated dates
+  const calculatedTasks = useMemo(() => {
+    const _tasks = JSON.parse(JSON.stringify(activeProject.tasks)) as Task[];
+    const taskMap = new Map(_tasks.map(t => [t.id, t]));
+
+    // Forward Pass
+    let changed = true;
+    while(changed) {
+      changed = false;
+      _tasks.forEach(task => {
+        let maxES = 0;
+        if (task.predecessors.length > 0) {
+          task.predecessors.forEach(pid => {
+            const p = taskMap.get(pid);
+            if (p && p.earlyFinish !== undefined) {
+              maxES = Math.max(maxES, p.earlyFinish);
+            }
+          });
+        }
+        if (task.earlyStart !== maxES) {
+          task.earlyStart = maxES;
+          task.earlyFinish = maxES + task.duration;
+          changed = true;
+        }
+      });
+    }
+
+    const pDuration = Math.max(..._tasks.map(t => t.earlyFinish || 0), 0);
+
+    // Backward Pass
+    _tasks.forEach(t => { 
+      t.lateFinish = pDuration; 
+      t.lateStart = pDuration - t.duration; 
+    });
+    
+    changed = true;
+    while(changed) {
+      changed = false;
+      _tasks.forEach(task => {
+        const successors = _tasks.filter(t => t.predecessors.includes(task.id));
+        if (successors.length > 0) {
+          const minLS = Math.min(...successors.map(s => s.lateStart || pDuration));
+          if (task.lateFinish !== minLS) {
+            task.lateFinish = minLS;
+            task.lateStart = minLS - task.duration;
+            changed = true;
+          }
+        }
+      });
+    }
+
+    _tasks.forEach(t => {
+      const totalFloat = (t.lateStart || 0) - (t.earlyStart || 0);
+      t.totalFloat = totalFloat;
+      t.isCritical = totalFloat === 0;
+    });
+
+    return _tasks;
+  }, [activeProject.tasks]);
+
+
   const updateProjectsWithHistory = (newProjects: Project[]) => {
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push(newProjects);
@@ -87,7 +154,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Keyboard shortcuts for Undo/Redo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
@@ -106,7 +172,6 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [historyIndex, history]);
 
-
   const handleUpdateTasks = (newTasks: Task[]) => {
     const updatedProjects = projects.map(p => 
       p.id === activeProjectId ? { ...p, tasks: newTasks, lastModified: Date.now() } : p
@@ -115,6 +180,7 @@ const App: React.FC = () => {
   };
 
   const handleTaskUpdate = (updatedTask: Task) => {
+    // We must find the task in the original array, not the calculated one
     const newTasks = activeProject.tasks.map(t => t.id === updatedTask.id ? updatedTask : t);
     handleUpdateTasks(newTasks);
   };
@@ -176,7 +242,6 @@ const App: React.FC = () => {
     updateProjectsWithHistory(updatedProjects);
   };
 
-  // --- Resizing Logic ---
   const startResizingLeft = useCallback((mouseDownEvent: React.MouseEvent) => {
     const startX = mouseDownEvent.clientX;
     const startWidth = leftWidth;
@@ -235,10 +300,11 @@ const App: React.FC = () => {
       {/* 2. Schedule Table Panel */}
       <div style={{ width: middleWidth }} className="flex-shrink-0 relative h-full flex flex-col border-r border-slate-200">
          <ScheduleTable 
-            tasks={activeProject.tasks} 
+            tasks={calculatedTasks} 
             onUpdateTask={handleTaskUpdate} 
             onAddTask={handleAddTask}
             onDeleteTask={handleDeleteTask}
+            projectStartDate={projectStartDate}
           />
          <div 
           className="resize-handle-h absolute top-0 right-0 h-full w-1 hover:bg-blue-400 z-10"
@@ -267,10 +333,11 @@ const App: React.FC = () => {
             </button>
           </div>
           <NetworkDiagram 
-            tasks={activeProject.tasks}
-            annotations={activeProject.annotations || []} // Safely pass empty array
+            tasks={calculatedTasks}
+            annotations={activeProject.annotations || []} 
             onUpdateTasks={handleUpdateTasks}
             onUpdateAnnotations={handleUpdateAnnotations}
+            projectStartDate={projectStartDate}
             onUpdateAnalysis={(path, duration) => {
               setCurrentCriticalPath(path);
               setProjectDuration(duration);
@@ -279,7 +346,7 @@ const App: React.FC = () => {
       </div>
 
       <AIAssistant 
-        tasks={activeProject.tasks} 
+        tasks={calculatedTasks} 
         criticalPath={currentCriticalPath}
         projectDuration={projectDuration}
       />

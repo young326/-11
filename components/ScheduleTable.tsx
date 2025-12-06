@@ -1,18 +1,19 @@
+
 import React, { useState } from 'react';
 import { Task, LinkType } from '../types';
-import { Plus, Trash, AlertCircle, Link as LinkIcon, X, CheckSquare, Square } from 'lucide-react';
+import { Plus, Trash, AlertCircle, Link as LinkIcon, X, CheckSquare, Square, Folder, CornerDownRight } from 'lucide-react';
 
 interface ScheduleTableProps {
   tasks: Task[];
   onUpdateTask: (task: Task) => void;
   onAddTask: () => void;
   onDeleteTask: (id: string) => void;
+  projectStartDate: Date;
 }
 
-const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAddTask, onDeleteTask }) => {
+const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAddTask, onDeleteTask, projectStartDate }) => {
   const [linkModalTaskId, setLinkModalTaskId] = useState<string | null>(null);
 
-  // Helper to handle link toggling
   const togglePredecessor = (targetTask: Task, predId: string) => {
     const currentPreds = targetTask.predecessors || [];
     let newPreds;
@@ -26,15 +27,55 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAd
 
   const editingTask = tasks.find(t => t.id === linkModalTaskId);
 
-  // Helper function to format days into dates
-  // In a real application, the project start date would be passed as a prop
-  const getTaskDate = (daysOffset?: number) => {
-    if (daysOffset === undefined) return '-';
-    const d = new Date();
-    d.setHours(0,0,0,0);
-    // Aligning with the conceptual start date of the project (Day 0 = Today)
-    d.setDate(d.getDate() + daysOffset); 
-    return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+  // Date Utilities
+  const formatDateForInput = (offset?: number) => {
+    if (offset === undefined) return '';
+    const d = new Date(projectStartDate);
+    d.setDate(d.getDate() + offset);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const getDaysFromDateStr = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const start = new Date(projectStartDate);
+    const diffTime = d.getTime() - start.getTime();
+    return Math.round(diffTime / (1000 * 3600 * 24));
+  };
+
+  const handleStartChange = (task: Task, dateStr: string) => {
+    if (!dateStr) return;
+    const newStart = getDaysFromDateStr(dateStr);
+    const currentFinish = task.earlyFinish || (newStart + task.duration);
+    const newDuration = Math.max(0, currentFinish - newStart);
+    onUpdateTask({ ...task, duration: newDuration });
+  };
+
+  const handleEndChange = (task: Task, dateStr: string) => {
+    if (!dateStr) return;
+    const newFinish = getDaysFromDateStr(dateStr);
+    const currentStart = task.earlyStart || 0;
+    const newDuration = Math.max(0, newFinish - currentStart);
+    onUpdateTask({ ...task, duration: newDuration });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent, task: Task) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      // Indent: make child (simple visual hierarchy logic could be adding parentId)
+      // For now, we just simulate by finding prev task
+      const idx = tasks.findIndex(t => t.id === task.id);
+      if (idx > 0) {
+        onUpdateTask({ ...task, parentId: tasks[idx-1].id });
+      }
+    } else if (e.key === 'Backspace' && (e.target as HTMLInputElement).selectionStart === 0) {
+      // Outdent
+      if (task.parentId) {
+         onUpdateTask({ ...task, parentId: undefined });
+      }
+    }
   };
 
   return (
@@ -55,12 +96,12 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAd
             <tr>
               <th className="p-2 border-b border-slate-200 font-semibold w-12 text-center">代号</th>
               <th className="p-2 border-b border-slate-200 font-semibold w-24">工区</th>
-              <th className="p-2 border-b border-slate-200 font-semibold w-32">工作名称</th>
+              <th className="p-2 border-b border-slate-200 font-semibold w-40">工作名称</th>
               <th className="p-2 border-b border-slate-200 font-semibold w-12 text-center">工期</th>
               <th className="p-2 border-b border-slate-200 font-semibold w-20">类型</th>
               <th className="p-2 border-b border-slate-200 font-semibold w-24">紧前工作</th>
-              <th className="p-2 border-b border-slate-200 font-semibold w-20">开始日期</th>
-              <th className="p-2 border-b border-slate-200 font-semibold w-20">结束日期</th>
+              <th className="p-2 border-b border-slate-200 font-semibold w-28">开始</th>
+              <th className="p-2 border-b border-slate-200 font-semibold w-28">结束</th>
               <th className="p-2 border-b border-slate-200 font-semibold w-10 text-center">操作</th>
             </tr>
           </thead>
@@ -85,12 +126,16 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAd
                   />
                 </td>
                 <td className="p-1">
-                  <input 
-                    type="text" 
-                    value={task.name}
-                    onChange={(e) => onUpdateTask({ ...task, name: e.target.value })}
-                    className="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded px-1 truncate font-medium text-slate-700 transition-colors"
-                  />
+                  <div className="flex items-center" style={{ paddingLeft: task.parentId ? 20 : 0 }}>
+                    {task.parentId ? <CornerDownRight size={12} className="text-slate-400 mr-1 shrink-0" /> : <Folder size={12} className="text-blue-300 mr-1 shrink-0 opacity-50" />}
+                    <input 
+                      type="text" 
+                      value={task.name}
+                      onKeyDown={(e) => handleKeyDown(e, task)}
+                      onChange={(e) => onUpdateTask({ ...task, name: e.target.value })}
+                      className="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded px-1 truncate font-medium text-slate-700 transition-colors"
+                    />
+                  </div>
                 </td>
                 <td className="p-1">
                   <input 
@@ -121,11 +166,21 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAd
                      </div>
                    </div>
                 </td>
-                <td className="p-2 text-slate-600 font-mono text-[11px]">
-                  {getTaskDate(task.earlyStart)}
+                <td className="p-1">
+                  <input 
+                    type="date" 
+                    value={formatDateForInput(task.earlyStart)}
+                    onChange={(e) => handleStartChange(task, e.target.value)}
+                    className="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1 text-xs text-slate-600 font-mono"
+                  />
                 </td>
-                <td className="p-2 text-slate-600 font-mono text-[11px]">
-                  {getTaskDate(task.earlyFinish)}
+                <td className="p-1">
+                  <input 
+                    type="date" 
+                    value={formatDateForInput(task.earlyFinish)}
+                    onChange={(e) => handleEndChange(task, e.target.value)}
+                    className="w-full bg-transparent border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1 text-xs text-slate-600 font-mono"
+                  />
                 </td>
                 <td className="p-1 text-center">
                   <button onClick={() => onDeleteTask(task.id)} className="text-slate-300 hover:text-red-500 transition-colors" title="删除工作">
@@ -144,7 +199,7 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAd
         )}
       </div>
 
-      {/* Visual Linking Modal */}
+      {/* Link Modal */}
       {linkModalTaskId && editingTask && (
         <div className="absolute inset-0 z-50 bg-slate-900/10 backdrop-blur-[1px] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-2xl border border-slate-200 w-full max-w-sm flex flex-col max-h-[80%] animate-in fade-in zoom-in duration-200 ring-1 ring-slate-900/5">

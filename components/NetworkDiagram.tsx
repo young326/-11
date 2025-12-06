@@ -1,25 +1,26 @@
+
 import React, { useEffect, useRef, useMemo, useState } from 'react';
 import * as d3 from 'd3';
 import { Task, LinkType, Annotation } from '../types';
-import { ZoomIn, ZoomOut, Download, Type, BoxSelect, Settings, Calendar, MousePointer2, Layers, Flag, AlertTriangle, Star, CheckCircle } from 'lucide-react';
+import { ZoomIn, ZoomOut, Download, Type, BoxSelect, Settings, Calendar, MousePointer2, Layers, Flag, AlertTriangle, Star, CheckCircle, Edit3, X } from 'lucide-react';
 
 interface NetworkDiagramProps {
   tasks: Task[];
-  annotations?: Annotation[]; // Made optional but handled
+  annotations?: Annotation[]; 
   onUpdateTasks?: (tasks: Task[]) => void;
   onUpdateAnnotations?: (annotations: Annotation[]) => void;
   onUpdateAnalysis: (criticalPath: string[], duration: number) => void;
+  projectStartDate: Date;
 }
 
 type ViewMode = 'day' | 'month' | 'year';
 
-// 样式常量
 const STYLES = {
   gridColor: '#06b6d4', 
   gridOpacity: 0.3,
   zoneBg: '#f8fafc',
   zoneBorder: '#94a3b8',
-  taskHeight: 50, // Increased for better drag target
+  taskHeight: 50,
   nodeRadius: 6,
   criticalColor: '#ef4444',
   normalColor: '#1e293b',
@@ -31,7 +32,8 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
   annotations = [], 
   onUpdateTasks,
   onUpdateAnnotations,
-  onUpdateAnalysis 
+  onUpdateAnalysis,
+  projectStartDate
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,8 +42,10 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [activeTool, setActiveTool] = useState<'select' | 'text' | 'flag' | 'alert' | 'star' | 'check'>('select');
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  // --- 0. Resize Observer ---
+  // Resize Observer
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
@@ -56,81 +60,29 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // --- 1. 数据处理与 CPM 计算 ---
+  // Process Data (Calculate Coordinates based on passed tasks)
   const processedData = useMemo(() => {
-    const _tasks = JSON.parse(JSON.stringify(tasks)) as Task[];
+    // Tasks are already calculated by parent App component for time fields.
+    // We just need to layout them into Zones/Lanes.
+    const _tasks = tasks; // Use tasks from props directly as they are source of truth for time
     const taskMap = new Map(_tasks.map(t => [t.id, t]));
 
-    // Forward Pass
-    let changed = true;
-    while(changed) {
-      changed = false;
-      _tasks.forEach(task => {
-        let maxES = 0;
-        if (task.predecessors.length > 0) {
-          task.predecessors.forEach(pid => {
-            const p = taskMap.get(pid);
-            if (p && p.earlyFinish !== undefined) {
-              maxES = Math.max(maxES, p.earlyFinish);
-            }
-          });
-        }
-        if (task.earlyStart !== maxES) {
-          task.earlyStart = maxES;
-          task.earlyFinish = maxES + task.duration;
-          changed = true;
-        }
-      });
-    }
-
     const projectDuration = Math.max(..._tasks.map(t => t.earlyFinish || 0), 0);
+    const criticalPathIds = _tasks.filter(t => t.isCritical).map(t => t.id);
 
-    // Backward Pass
-    _tasks.forEach(t => { 
-      t.lateFinish = projectDuration; 
-      t.lateStart = projectDuration - t.duration; 
-    });
-    
-    changed = true;
-    while(changed) {
-      changed = false;
-      _tasks.forEach(task => {
-        const successors = _tasks.filter(t => t.predecessors.includes(task.id));
-        if (successors.length > 0) {
-          const minLS = Math.min(...successors.map(s => s.lateStart || projectDuration));
-          if (task.lateFinish !== minLS) {
-            task.lateFinish = minLS;
-            task.lateStart = minLS - task.duration;
-            changed = true;
-          }
-        }
-      });
-    }
-
-    const criticalPathIds: string[] = [];
-    _tasks.forEach(t => {
-      const totalFloat = (t.lateStart || 0) - (t.earlyStart || 0);
-      t.totalFloat = totalFloat;
-      t.isCritical = totalFloat === 0;
-      if (t.isCritical) criticalPathIds.push(t.id);
-    });
-
+    // Notify parent about analysis (optional if parent already knows, but good for syncing)
     setTimeout(() => onUpdateAnalysis(criticalPathIds, projectDuration), 0);
 
-    // Zone Layout
-    const zones = Array.from(new Set(_tasks.map(t => t.zone || '默认分区'))).sort();
+    const zones: string[] = Array.from<string>(new Set(_tasks.map(t => t.zone || '默认分区'))).sort();
     
     const layoutData: { task: Task; laneIndex: number; globalRowIndex: number; zone: string }[] = [];
     let currentGlobalRow = 0;
     const zoneMeta: { name: string; startRow: number; rowCount: number; endRow: number }[] = [];
     
-    // Map to track which lane a task was assigned to, to try and align successors
     const taskLaneMap = new Map<string, number>();
 
     zones.forEach(zone => {
       const zoneTasks = _tasks.filter(t => (t.zone || '默认分区') === zone);
-      // Sort primarily by Early Start to process in time order
-      // Secondary sort by ID to keep deterministic
       zoneTasks.sort((a, b) => (a.earlyStart || 0) - (b.earlyStart || 0) || a.id.localeCompare(b.id));
 
       const lanes: number[] = [];
@@ -138,22 +90,19 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
 
       zoneTasks.forEach(task => {
         let assignedLane = -1;
-
-        // Strategy: Try to place in the same lane as a direct predecessor (Gap=0) to form a continuous line
-        // This helps merge the end node of pred and start node of current task into one visual node
+        
+        // Try to align with predecessor
         const directPred = task.predecessors
              .map(pid => taskMap.get(pid))
              .find(p => p && (p.zone || '默认分区') === zone && Math.abs((p.earlyFinish || 0) - (task.earlyStart || 0)) < 0.01);
         
         if (directPred) {
             const predLane = taskLaneMap.get(directPred.id);
-            // Check if that lane is free (time <= current start, allowing tiny float overlap)
             if (predLane !== undefined && (lanes[predLane] || 0) <= (task.earlyStart || 0) + 0.1) {
                 assignedLane = predLane;
             }
         }
 
-        // Fallback: First Fit
         if (assignedLane === -1) {
             for (let i = 0; i < lanes.length; i++) {
               if ((lanes[i] || 0) <= (task.earlyStart || 0) + 0.1) {
@@ -163,13 +112,11 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
             }
         }
 
-        // New Lane
         if (assignedLane === -1) {
           assignedLane = lanes.length;
           lanes.push(0);
         }
         
-        // Update lane end time
         lanes[assignedLane] = task.earlyFinish || 0;
         taskLaneMap.set(task.id, assignedLane);
 
@@ -189,20 +136,13 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     return { tasks: layoutData, projectDuration, zoneMeta, totalRows: currentGlobalRow, rawTasks: taskMap };
   }, [tasks]);
 
-  const projectStartDate = useMemo(() => {
-    const d = new Date();
-    d.setHours(0,0,0,0);
-    d.setDate(d.getDate() - 2); 
-    return d;
-  }, []);
-
   const addDays = (date: Date, days: number) => {
     const result = new Date(date);
     result.setDate(result.getDate() + days);
     return result;
   };
 
-  // --- D3 渲染与交互 ---
+  // D3 Render
   useEffect(() => {
     if (!svgRef.current || !containerRef.current || dimensions.width === 0) return;
 
@@ -214,15 +154,17 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
 
     svg.selectAll("*").remove();
 
-    // Definitions
+    // Defs: Markers
     const defs = svg.append("defs");
+    
+    // Updated Arrow Size: Length increased by double (markerWidth 8), Height kept small (markerHeight 4)
     defs.append("marker")
       .attr("id", "arrow-normal")
       .attr("viewBox", "0 0 10 10")
-      .attr("refX", 9)
+      .attr("refX", 10) // Tip at end
       .attr("refY", 5)
-      .attr("markerWidth", 5)
-      .attr("markerHeight", 5)
+      .attr("markerWidth", 8) // Doubled length
+      .attr("markerHeight", 4)
       .attr("orient", "auto")
       .append("path")
       .attr("d", "M 0 0 L 10 5 L 0 10 z")
@@ -231,10 +173,10 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     defs.append("marker")
       .attr("id", "arrow-critical")
       .attr("viewBox", "0 0 10 10")
-      .attr("refX", 9)
+      .attr("refX", 10) // Tip at end
       .attr("refY", 5)
-      .attr("markerWidth", 5)
-      .attr("markerHeight", 5)
+      .attr("markerWidth", 8) // Doubled length
+      .attr("markerHeight", 4)
       .attr("orient", "auto")
       .append("path")
       .attr("d", "M 0 0 L 10 5 L 0 10 z")
@@ -247,7 +189,6 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     const rowHeight = STYLES.taskHeight;
     const contentHeight = Math.max(height, processedData.totalRows * rowHeight + 100);
     
-    // Layers
     const mainGroup = svg.append("g");
     const gridGroup = mainGroup.append("g").attr("class", "grid-layer");
     const zoneGroup = mainGroup.append("g").attr("class", "zone-layer");
@@ -258,9 +199,8 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
 
     const taskCoords = new Map<string, { startX: number, endX: number, y: number, task: Task }>();
 
-    // Main Draw Function
     const draw = (currentXScale: d3.ScaleTime<number, number>) => {
-      // 1. Grid
+      // Grid
       gridGroup.selectAll("*").remove();
       const xAxisTicks = currentXScale.ticks(width / 80);
       gridGroup.selectAll(".v-grid")
@@ -275,7 +215,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         .attr("text-anchor", "middle").attr("font-size", 10).attr("fill", STYLES.gridColor)
         .text(d => viewMode === 'year' ? d3.timeFormat("%Y")(d) : viewMode === 'month' ? d3.timeFormat("%m/%d")(d) : d3.timeFormat("%d")(d));
 
-      // 2. Zones
+      // Zones
       zoneGroup.selectAll("*").remove();
       processedData.zoneMeta.forEach((zone) => {
         const yPos = zone.startRow * rowHeight + 30;
@@ -291,7 +231,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
           .attr("font-size", 14).attr("font-weight", "bold").attr("fill", STYLES.gridColor).text(zone.name);
       });
 
-      // 3. Tasks Logic (Calculate Coords)
+      // Calculate Coords
       taskCoords.clear();
       processedData.tasks.forEach(item => {
         const startDate = addDays(projectStartDate, item.task.earlyStart || 0);
@@ -302,12 +242,10 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         taskCoords.set(item.task.id, { startX, endX, y, task: item.task });
       });
 
-      // 4. Draw Links & Nodes
       linkGroup.selectAll("*").remove();
       nodeGroup.selectAll("*").remove();
       textGroup.selectAll("*").remove();
 
-      // Helper to generate unique node ID for deduplication
       const getNodeKey = (x: number, y: number) => `${Math.round(x)},${Math.round(y)}`;
       const uniqueNodes = new Map<string, {x: number, y: number, dateStr: string}>();
 
@@ -317,8 +255,13 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         const { startX, endX, y, task } = coords;
         const isCritical = item.task.isCritical;
         const color = isCritical ? STYLES.criticalColor : STYLES.normalColor;
+        const r = STYLES.nodeRadius;
 
-        // --- Drag Behavior for Task Arrow ---
+        // Snapping Points for Horizontal Arrow
+        const arrowStartX = startX + r;
+        const arrowEndX = endX - r;
+
+        // Drag Behavior
         let initialClickX = 0;
         let initialClickY = 0;
 
@@ -331,24 +274,19 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
           .on("drag", function(event) {
              const dx = event.x - initialClickX;
              const dy = event.y - initialClickY;
-             // Visual feedback only
              d3.select(this)
-               .attr("x1", startX + dx)
-               .attr("x2", endX + dx)
+               .attr("x1", arrowStartX + dx)
+               .attr("x2", arrowEndX + dx)
                .attr("y1", y + dy)
                .attr("y2", y + dy);
           })
           .on("end", function(event) {
              d3.select(this).attr("stroke-width", isCritical ? 2.5 : 1.5).attr("cursor", "grab");
-             
              const dx = event.x - initialClickX;
              const dy = event.y - initialClickY;
-
-             // 1. Check Zone Change (Vertical Drag Dominant)
+             
              if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > rowHeight/2) {
                const newRowIndex = Math.floor(((y + dy) - 30) / rowHeight);
-               
-               // Find which zone this row belongs to
                let newZone = task.zone;
                for (const z of processedData.zoneMeta) {
                  if (newRowIndex >= z.startRow && newRowIndex < z.endRow) {
@@ -356,69 +294,47 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
                    break;
                  }
                }
-
                if (newZone && newZone !== task.zone && onUpdateTasks) {
-                 const updatedTasks = tasks.map(t => t.id === task.id ? { ...t, zone: newZone } : t);
-                 onUpdateTasks(updatedTasks);
+                 onUpdateTasks(tasks.map(t => t.id === task.id ? { ...t, zone: newZone } : t));
                  return;
                }
              } 
-             // 2. Check Duration Change (Horizontal Drag Dominant)
              else if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
-                 // Convert pixels to days
                  const startDateVal = currentXScale.invert(startX);
                  const endDateVal = currentXScale.invert(startX + dx);
                  const diffTime = endDateVal.getTime() - startDateVal.getTime();
                  const diffDays = Math.round(diffTime / (1000 * 3600 * 24));
-                 
                  if (diffDays !== 0) {
                    const newDuration = Math.max(1, task.duration + diffDays);
-                   if (newDuration !== task.duration && onUpdateTasks) {
-                      const updatedTasks = tasks.map(t => t.id === task.id ? { ...t, duration: newDuration } : t);
-                      onUpdateTasks(updatedTasks);
-                      return;
-                   }
+                   onUpdateTasks && onUpdateTasks(tasks.map(t => t.id === task.id ? { ...t, duration: newDuration } : t));
+                   return;
                  }
              }
-
-             // Redraw to reset position if no valid change detected
              draw(currentXScale); 
           });
 
-        // Draw Task Arrow
-        const arrow = linkGroup.append("line")
-          .attr("x1", startX).attr("y1", y)
-          .attr("x2", endX).attr("y2", y)
+        // Draw Task Arrow (Horizontal)
+        linkGroup.append("line")
+          .attr("x1", arrowStartX).attr("y1", y)
+          .attr("x2", arrowEndX).attr("y2", y)
           .attr("stroke", color).attr("stroke-width", isCritical ? 2.5 : 1.5)
           .attr("marker-end", isCritical ? "url(#arrow-critical)" : "url(#arrow-normal)")
           .attr("cursor", "grab")
+          .on("click", () => setEditingTask(task))
           .call(dragArrow);
 
-        // Tooltip events
-        arrow.on("mouseover", (e) => {
-             tooltip.style("opacity", 1).html(`<div class="font-bold">${task.name}</div><div>工期: ${task.duration}天</div><div>分区: ${task.zone}</div>`);
-          }).on("mousemove", (e) => tooltip.style("left", (e.pageX+10)+"px").style("top", (e.pageY+10)+"px"))
-          .on("mouseout", () => tooltip.style("opacity", 0));
-
-        // Draw Text
         textGroup.append("text").attr("x", (startX + endX)/2).attr("y", y - 8).attr("text-anchor", "middle")
-          .attr("font-size", 11).attr("fill", color).text(task.name);
+          .attr("font-size", 11).attr("fill", color).text(task.name).attr("cursor", "pointer").on("click", () => setEditingTask(task));
         textGroup.append("text").attr("x", (startX + endX)/2).attr("y", y + 14).attr("text-anchor", "middle")
-          .attr("font-size", 10).attr("fill", "#64748b").text(task.duration);
+          .attr("font-size", 10).attr("fill", "#64748b").text(task.duration).attr("cursor", "pointer").on("click", () => setEditingTask(task));
 
-        // Collect Nodes
         const startKey = getNodeKey(startX, y);
         const endKey = getNodeKey(endX, y);
         
         if (!uniqueNodes.has(startKey)) uniqueNodes.set(startKey, { x: startX, y, dateStr: d3.timeFormat("%m-%d")(addDays(projectStartDate, task.earlyStart||0)) });
-        
-        // The End Node of this task is the 'active' handle for changing duration
-        // We store the task ID with the end node to identify what to update on drag
-        if (!uniqueNodes.has(endKey)) {
-           uniqueNodes.set(endKey, { x: endX, y, dateStr: d3.timeFormat("%m-%d")(addDays(projectStartDate, task.earlyFinish||0)) });
-        }
+        if (!uniqueNodes.has(endKey)) uniqueNodes.set(endKey, { x: endX, y, dateStr: d3.timeFormat("%m-%d")(addDays(projectStartDate, task.earlyFinish||0)) });
 
-        // Draw Dependencies (Logic lines)
+        // Draw Predecessors
         task.predecessors.forEach(pid => {
           const pred = taskCoords.get(pid);
           if (pred) {
@@ -428,28 +344,35 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
             const cY = y;
             const gap = task.earlyStart! - (processedData.rawTasks.get(pid)?.earlyFinish || 0);
 
+            // Snapping logic for vertical lines
+            let vY1 = pY; 
+            let vY2 = cY;
+            // If dropping down, start from bottom of node (y+r) to top of node (y-r)
+            // If going up, start from top of node (y-r) to bottom of node (y+r)
+            if (cY > pY) { vY1 += r; vY2 -= r; }
+            else if (cY < pY) { vY1 -= r; vY2 += r; }
+            else { vY1 += r; vY2 += r; } // Should not happen for vertical line if Y is same
+
             if (gap > 0) {
-              // Wavy Line for Free Float
               const midX = cX; 
-              // Simple wavy path approx
+              // Wavy Line
               const waves = Math.floor((midX - pX) / 10);
-              let d = `M ${pX} ${pY}`;
+              let d = `M ${pX + r} ${pY}`;
               for(let i=0; i<waves; i++) {
-                d += ` q 5 -3 10 0`; // simple quadratic bezier wave
+                d += ` q 5 -3 10 0`; 
               }
-              d += ` L ${midX} ${pY}`; // finish line
+              d += ` L ${midX} ${pY}`;
               
               linkGroup.append("path").attr("d", d).attr("fill", "none").attr("stroke", "#94a3b8").attr("stroke-width", 1);
-              linkGroup.append("line").attr("x1", midX).attr("y1", pY).attr("x2", cX).attr("y2", cY) // Vertical drop
+              // Vertical drop
+              linkGroup.append("line").attr("x1", midX).attr("y1", pY + (cY > pY ? r : -r)).attr("x2", cX).attr("y2", vY2) 
                 .attr("stroke", "#94a3b8").attr("stroke-dasharray", "3,3");
                 
-              // Node at turn
               const turnKey = getNodeKey(midX, pY);
               uniqueNodes.set(turnKey, { x: midX, y: pY, dateStr: d3.timeFormat("%m-%d")(addDays(projectStartDate, task.earlyStart||0)) });
             } else {
-              // Vertical Line
               if (Math.abs(pY - cY) > 1) {
-                 linkGroup.append("line").attr("x1", pX).attr("y1", pY).attr("x2", cX).attr("y2", cY)
+                 linkGroup.append("line").attr("x1", pX).attr("y1", vY1).attr("x2", cX).attr("y2", vY2)
                    .attr("stroke", "#94a3b8").attr("stroke-width", 1).attr("stroke-dasharray", "3,3");
               }
             }
@@ -457,9 +380,9 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         });
       });
 
-      // 5. Draw Unique Nodes with Drag for Duration
+      // Nodes
       uniqueNodes.forEach((node, key) => {
-        // Determine which tasks end at this node to update their duration
+        const r = STYLES.nodeRadius;
         const endingTasks = processedData.tasks.filter(t => {
            const coords = taskCoords.get(t.task.id);
            return coords && getNodeKey(coords.endX, coords.y) === key;
@@ -469,92 +392,81 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
           .on("start", function() { d3.select(this).attr("r", 8).attr("fill", "orange"); })
           .on("drag", function(e) { d3.select(this).attr("cx", e.x); })
           .on("end", function(e) {
-             d3.select(this).attr("r", STYLES.nodeRadius).attr("fill", "white");
-             
+             d3.select(this).attr("r", r).attr("fill", "white");
              if (endingTasks.length > 0 && onUpdateTasks) {
-               // Calculate new date based on x position
                const newDate = currentXScale.invert(e.x);
-               // Diff in days
                const oldDate = addDays(projectStartDate, endingTasks[0].task.earlyFinish || 0);
                const diffTime = newDate.getTime() - oldDate.getTime();
                const diffDays = Math.round(diffTime / (1000 * 3600 * 24));
-               
                if (diffDays !== 0) {
-                 const updatedTasks = tasks.map(t => {
-                   if (endingTasks.find(et => et.task.id === t.id)) {
-                     const newDuration = Math.max(1, t.duration + diffDays);
-                     return { ...t, duration: newDuration };
-                   }
-                   return t;
-                 });
-                 onUpdateTasks(updatedTasks);
+                 onUpdateTasks(tasks.map(t => endingTasks.find(et => et.task.id === t.id) ? { ...t, duration: Math.max(1, t.duration + diffDays) } : t));
                } else {
-                 draw(currentXScale); // snap back
+                 draw(currentXScale);
                }
              }
           });
 
         const circle = nodeGroup.append("circle")
           .attr("cx", node.x).attr("cy", node.y)
-          .attr("r", STYLES.nodeRadius)
+          .attr("r", r)
           .attr("fill", "white").attr("stroke", "black").attr("stroke-width", 1);
         
         if (endingTasks.length > 0) {
            circle.attr("cursor", "ew-resize").call(dragNode);
         }
 
-        // Date Label
         nodeGroup.append("text").attr("x", node.x).attr("y", node.y + 18)
           .attr("text-anchor", "middle").attr("font-size", 9).attr("fill", "#64748b").text(node.dateStr);
       });
 
-      // 6. Annotations
+      // Annotations
       annotationGroup.selectAll("*").remove();
-      // Ensure annotations is always an array to fix "undefined is not an object" error
       const safeAnnotations = Array.isArray(annotations) ? annotations : [];
-      
       safeAnnotations.forEach(ann => {
         const g = annotationGroup.append("g")
           .attr("transform", `translate(${ann.x}, ${ann.y})`)
           .attr("cursor", "move");
         
-        // Drag behavior for annotations
-        const dragAnnotation = d3.drag<SVGGElement, unknown>()
-          .on("drag", function(e) {
-            d3.select(this).attr("transform", `translate(${e.x}, ${e.y})`);
-          })
+        const dragAnn = d3.drag<SVGGElement, unknown>()
+          .on("drag", function(e) { d3.select(this).attr("transform", `translate(${e.x}, ${e.y})`); })
           .on("end", function(e) {
-             if (onUpdateAnnotations) {
-               const updated = safeAnnotations.map(a => a.id === ann.id ? { ...a, x: e.x, y: e.y } : a);
-               onUpdateAnnotations(updated);
-             }
+             onUpdateAnnotations && onUpdateAnnotations(safeAnnotations.map(a => a.id === ann.id ? { ...a, x: e.x, y: e.y } : a));
           });
-        
-        g.call(dragAnnotation);
+        g.call(dragAnn);
 
         if (ann.type === 'text') {
-          g.append("text").text(ann.content).attr("font-size", 14).attr("fill", "#333");
-          g.append("rect").attr("x", -5).attr("y", -15).attr("width", ann.content.length * 10 + 10).attr("height", 20)
-            .attr("fill", "transparent").attr("stroke", "#ccc").attr("stroke-dasharray", "2,2").style("opacity", 0.5);
+          if (editingAnnotationId === ann.id) {
+             g.append("foreignObject").attr("width", 200).attr("height", 40).attr("x", -10).attr("y", -20)
+              .append("xhtml:input")
+              .style("width", "100%").style("background", "white").style("border", "1px solid blue").style("outline", "none")
+              .attr("value", ann.content)
+              .on("blur", function(e: any) {
+                  onUpdateAnnotations && onUpdateAnnotations(safeAnnotations.map(a => a.id === ann.id ? { ...a, content: e.target.value } : a));
+                  setEditingAnnotationId(null);
+              })
+              .on("keydown", function(e: any) {
+                 if (e.key === 'Enter') {
+                    onUpdateAnnotations && onUpdateAnnotations(safeAnnotations.map(a => a.id === ann.id ? { ...a, content: e.target.value } : a));
+                    setEditingAnnotationId(null);
+                 }
+              })
+              // Auto focus trick
+              .each(function() { (this as HTMLInputElement).focus(); });
+          } else {
+            const textEl = g.append("text").text(ann.content).attr("font-size", 14).attr("fill", "#333");
+            g.append("rect").attr("x", -5).attr("y", -15).attr("width", ann.content.length * 10 + 10).attr("height", 20)
+              .attr("fill", "transparent").attr("stroke", "transparent")
+              .on("dblclick", () => setEditingAnnotationId(ann.id));
+          }
         } else {
-          // Render icons simply
           g.append("circle").attr("r", 15).attr("fill", "yellow").attr("stroke", "orange");
           g.append("text").text(ann.content === 'flag' ? '🚩' : ann.content === 'star' ? '⭐' : '⚠️')
             .attr("text-anchor", "middle").attr("dy", 5);
         }
-
-        // Delete on right click
-        g.on("contextmenu", (e) => {
-          e.preventDefault();
-          if (onUpdateAnnotations) {
-             const updated = safeAnnotations.filter(a => a.id !== ann.id);
-             onUpdateAnnotations(updated);
-          }
-        });
+        g.on("contextmenu", (e) => { e.preventDefault(); onUpdateAnnotations && onUpdateAnnotations(safeAnnotations.filter(a => a.id !== ann.id)); });
       });
     };
 
-    // Zoom setup
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 5])
       .on("zoom", (event) => {
@@ -574,29 +486,22 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     svg.call(zoom.transform, d3.zoomIdentity.translate(0, 0));
     draw(initialXScale);
 
-    // Click on canvas to add annotation
     svg.on("click", (event) => {
       if (activeTool !== 'select' && onUpdateAnnotations) {
          const [x, y] = d3.pointer(event);
          const transform = d3.zoomTransform(svg.node()!);
-         
          const newAnn: Annotation = {
-           id: crypto.randomUUID(),
-           type: activeTool === 'text' ? 'text' : 'icon',
-           content: activeTool === 'text' ? '新批注' : activeTool,
-           x: (x - transform.x) / transform.k,
-           y: y - transform.y
+           id: crypto.randomUUID(), type: activeTool === 'text' ? 'text' : 'icon',
+           content: activeTool === 'text' ? '双击编辑' : activeTool,
+           x: (x - transform.x) / transform.k, y: y - transform.y
          };
-         
-         const currentAnnotations = Array.isArray(annotations) ? annotations : [];
-         onUpdateAnnotations([...currentAnnotations, newAnn]);
+         onUpdateAnnotations([...(Array.isArray(annotations) ? annotations : []), newAnn]);
          setActiveTool('select');
       }
     });
 
-  }, [processedData, projectStartDate, viewMode, dimensions, annotations, activeTool]); // Dependencies
+  }, [processedData, projectStartDate, viewMode, dimensions, annotations, activeTool, editingAnnotationId]);
 
-  // View Switch
   useEffect(() => {
     if (!svgRef.current || !zoomBehaviorRef.current) return;
     const svg = d3.select(svgRef.current);
@@ -608,7 +513,6 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
 
   return (
     <div className="h-full flex flex-col bg-slate-50 relative border-l border-slate-200">
-      {/* Toolbar */}
       <div className="h-10 border-b border-slate-200 bg-white flex items-center px-4 gap-3 shadow-sm z-10 shrink-0">
         <div className="flex items-center gap-2 text-slate-700">
           <Layers size={16} className="text-cyan-600"/>
@@ -639,6 +543,28 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         <svg ref={svgRef} className="w-full h-full block"></svg>
         <div ref={tooltipRef} className="absolute pointer-events-none bg-white/95 p-3 rounded shadow-xl border border-slate-200 z-50 opacity-0 transition-opacity duration-150 text-sm min-w-[180px] backdrop-blur text-left" style={{ top: 0, left: 0 }} />
       </div>
+
+      {editingTask && (
+        <div className="absolute inset-0 z-50 bg-slate-900/10 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-2xl border border-slate-200 w-full max-w-sm flex flex-col animate-in fade-in zoom-in duration-200">
+             <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-lg">
+                <h4 className="font-bold text-slate-700 flex items-center gap-2"><Edit3 size={16}/> 编辑工作属性</h4>
+                <button onClick={() => setEditingTask(null)}><X size={16}/></button>
+             </div>
+             <div className="p-4 grid gap-3">
+                <div><label className="text-xs text-slate-500">工作名称</label><input className="w-full border rounded p-1 text-sm" value={editingTask.name} onChange={e => setEditingTask({...editingTask, name: e.target.value})} /></div>
+                <div className="grid grid-cols-2 gap-2">
+                   <div><label className="text-xs text-slate-500">工期 (天)</label><input type="number" className="w-full border rounded p-1 text-sm" value={editingTask.duration} onChange={e => setEditingTask({...editingTask, duration: parseInt(e.target.value)||0})} /></div>
+                   <div><label className="text-xs text-slate-500">工区</label><input className="w-full border rounded p-1 text-sm" value={editingTask.zone||''} onChange={e => setEditingTask({...editingTask, zone: e.target.value})} /></div>
+                </div>
+                <div><label className="text-xs text-slate-500">紧前工作 (逗号分隔)</label><input className="w-full border rounded p-1 text-sm" value={editingTask.predecessors.join(',')} onChange={e => setEditingTask({...editingTask, predecessors: e.target.value.split(',').filter(x=>x)})} /></div>
+             </div>
+             <div className="p-3 border-t bg-slate-50 rounded-b-lg flex justify-end">
+                <button onClick={() => { onUpdateTasks && onUpdateTasks(tasks.map(t => t.id === editingTask.id ? editingTask : t)); setEditingTask(null); }} className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">保存修改</button>
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
