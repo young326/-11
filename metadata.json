@@ -1,0 +1,5 @@
+{
+  "name": "IntelliPlan AI - 智能网络计划",
+  "description": "一款基于Google Gemini的专业双代号网络图软件。具备工程项目管理、智能进度解析、自动网络图绘制及关键路径分析功能，符合工程网络计划技术规程。",
+  "requestFramePermissions": []
+}
