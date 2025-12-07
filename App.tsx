@@ -93,6 +93,12 @@ const App: React.FC = () => {
             }
           });
         }
+        
+        // Apply manual constraint (Start No Earlier Than)
+        if (task.constraintDate !== undefined) {
+          maxES = Math.max(maxES, task.constraintDate);
+        }
+
         if (task.earlyStart !== maxES) {
           task.earlyStart = maxES;
           task.earlyFinish = maxES + task.duration;
@@ -314,24 +320,6 @@ const App: React.FC = () => {
 
       {/* 3. Network Diagram Panel */}
       <div className="flex-1 flex flex-col h-full min-w-0 bg-slate-50 relative">
-          <div className="absolute top-2 right-4 flex gap-2 z-20">
-            <button 
-              onClick={handleUndo} 
-              disabled={historyIndex === 0}
-              className="p-1.5 bg-white rounded shadow border border-slate-200 hover:bg-slate-100 disabled:opacity-50 text-slate-600"
-              title="撤销 (Ctrl+Z)"
-            >
-              <Undo size={16} />
-            </button>
-            <button 
-              onClick={handleRedo} 
-              disabled={historyIndex === history.length - 1}
-              className="p-1.5 bg-white rounded shadow border border-slate-200 hover:bg-slate-100 disabled:opacity-50 text-slate-600"
-              title="重做 (Ctrl+Shift+Z)"
-            >
-              <Redo size={16} />
-            </button>
-          </div>
           <NetworkDiagram 
             tasks={calculatedTasks}
             annotations={activeProject.annotations || []} 
@@ -341,7 +329,11 @@ const App: React.FC = () => {
             onUpdateAnalysis={(path, duration) => {
               setCurrentCriticalPath(path);
               setProjectDuration(duration);
-            }} 
+            }}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={historyIndex > 0}
+            canRedo={historyIndex < history.length - 1}
           />
       </div>
 

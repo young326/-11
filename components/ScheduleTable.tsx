@@ -48,15 +48,16 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAd
   const handleStartChange = (task: Task, dateStr: string) => {
     if (!dateStr) return;
     const newStart = getDaysFromDateStr(dateStr);
-    const currentFinish = task.earlyFinish || (newStart + task.duration);
-    const newDuration = Math.max(0, currentFinish - newStart);
-    onUpdateTask({ ...task, duration: newDuration });
+    // Setting start date explicitly acts as a Constraint (SNET)
+    // This allows moving the task if it has no predecessors, or adding a delay if allowed by logic
+    onUpdateTask({ ...task, constraintDate: newStart });
   };
 
   const handleEndChange = (task: Task, dateStr: string) => {
     if (!dateStr) return;
     const newFinish = getDaysFromDateStr(dateStr);
     const currentStart = task.earlyStart || 0;
+    // Changing finish date adjusts Duration
     const newDuration = Math.max(0, newFinish - currentStart);
     onUpdateTask({ ...task, duration: newDuration });
   };
@@ -65,7 +66,6 @@ const ScheduleTable: React.FC<ScheduleTableProps> = ({ tasks, onUpdateTask, onAd
     if (e.key === 'Tab') {
       e.preventDefault();
       // Indent: make child (simple visual hierarchy logic could be adding parentId)
-      // For now, we just simulate by finding prev task
       const idx = tasks.findIndex(t => t.id === task.id);
       if (idx > 0) {
         onUpdateTask({ ...task, parentId: tasks[idx-1].id });

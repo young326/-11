@@ -29,6 +29,7 @@ export interface Task {
   zone?: string; // Partition/Zone
   description?: string;
   parentId?: string; // For hierarchical grouping
+  constraintDate?: number; // Manual start constraint (Start No Earlier Than)
   
   // Calculated fields for Critical Path Method (CPM)
   earlyStart?: number;

@@ -2,7 +2,9 @@
 import React, { useEffect, useRef, useMemo, useState } from 'react';
 import * as d3 from 'd3';
 import { Task, LinkType, Annotation } from '../types';
-import { ZoomIn, ZoomOut, Download, Type, BoxSelect, Settings, Calendar, MousePointer2, Layers, Flag, AlertTriangle, Star, CheckCircle, Edit3, X } from 'lucide-react';
+import { ZoomIn, ZoomOut, Download, Type, BoxSelect, Settings, Calendar, MousePointer2, Layers, Flag, AlertTriangle, Star, CheckCircle, Edit3, X, Undo, Redo, Save, Image as ImageIcon, FileText } from 'lucide-react';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 
 interface NetworkDiagramProps {
   tasks: Task[];
@@ -11,15 +13,19 @@ interface NetworkDiagramProps {
   onUpdateAnnotations?: (annotations: Annotation[]) => void;
   onUpdateAnalysis: (criticalPath: string[], duration: number) => void;
   projectStartDate: Date;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 type ViewMode = 'day' | 'month' | 'year';
 
 const STYLES = {
-  gridColor: '#06b6d4', 
-  gridOpacity: 0.3,
+  gridColor: '#94a3b8', 
+  gridOpacity: 0.2,
   zoneBg: '#f8fafc',
-  zoneBorder: '#94a3b8',
+  zoneBorder: '#cbd5e1',
   taskHeight: 50,
   nodeRadius: 6,
   criticalColor: '#ef4444',
@@ -33,7 +39,11 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
   onUpdateTasks,
   onUpdateAnnotations,
   onUpdateAnalysis,
-  projectStartDate
+  projectStartDate,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -44,6 +54,11 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
   const [activeTool, setActiveTool] = useState<'select' | 'text' | 'flag' | 'alert' | 'star' | 'check'>('select');
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+
+  // Export State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'png'>('pdf');
+  const [includeAnnotations, setIncludeAnnotations] = useState(true);
 
   // Resize Observer
   useEffect(() => {
@@ -60,17 +75,14 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // Process Data (Calculate Coordinates based on passed tasks)
+  // Process Data
   const processedData = useMemo(() => {
-    // Tasks are already calculated by parent App component for time fields.
-    // We just need to layout them into Zones/Lanes.
-    const _tasks = tasks; // Use tasks from props directly as they are source of truth for time
+    const _tasks = tasks; 
     const taskMap = new Map(_tasks.map(t => [t.id, t]));
 
     const projectDuration = Math.max(..._tasks.map(t => t.earlyFinish || 0), 0);
     const criticalPathIds = _tasks.filter(t => t.isCritical).map(t => t.id);
 
-    // Notify parent about analysis (optional if parent already knows, but good for syncing)
     setTimeout(() => onUpdateAnalysis(criticalPathIds, projectDuration), 0);
 
     const zones: string[] = Array.from<string>(new Set(_tasks.map(t => t.zone || '默认分区'))).sort();
@@ -142,6 +154,57 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     return result;
   };
 
+  const formatDateStr = (days: number) => {
+    const d = addDays(projectStartDate, days);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const parseDateStr = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const start = new Date(projectStartDate);
+    const diffTime = d.getTime() - start.getTime();
+    return Math.round(diffTime / (1000 * 3600 * 24));
+  };
+
+  const executeExport = async () => {
+    if (!containerRef.current || !svgRef.current) return;
+    
+    // Toggle annotation visibility
+    const annotationLayer = d3.select(svgRef.current).select(".annotation-layer");
+    const originalDisplay = annotationLayer.style("display");
+    
+    if (!includeAnnotations) {
+        annotationLayer.style("display", "none");
+    }
+
+    try {
+        const canvas = await html2canvas(containerRef.current, { scale: 2, useCORS: true });
+        
+        if (exportFormat === 'pdf') {
+            const imgData = canvas.toDataURL('image/png');
+            const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [canvas.width, canvas.height] });
+            pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+            pdf.save(`IntelliPlan-Network-${new Date().toISOString().split('T')[0]}.pdf`);
+        } else {
+            const link = document.createElement('a');
+            link.download = `IntelliPlan-Network-${new Date().toISOString().split('T')[0]}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+    } catch (e) {
+        console.error("Export failed", e);
+        alert("导出失败，请重试");
+    } finally {
+        if (!includeAnnotations) {
+            annotationLayer.style("display", originalDisplay);
+        }
+        setShowExportModal(false);
+    }
+  };
+
   // D3 Render
   useEffect(() => {
     if (!svgRef.current || !containerRef.current || dimensions.width === 0) return;
@@ -150,20 +213,19 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     const height = dimensions.height;
     
     const svg = d3.select(svgRef.current);
-    const tooltip = d3.select(tooltipRef.current);
 
     svg.selectAll("*").remove();
 
     // Defs: Markers
     const defs = svg.append("defs");
     
-    // Updated Arrow Size: Length increased by double (markerWidth 8), Height kept small (markerHeight 4)
+    // Updated Arrow Size
     defs.append("marker")
       .attr("id", "arrow-normal")
       .attr("viewBox", "0 0 10 10")
-      .attr("refX", 10) // Tip at end
+      .attr("refX", 10)
       .attr("refY", 5)
-      .attr("markerWidth", 8) // Doubled length
+      .attr("markerWidth", 8)
       .attr("markerHeight", 4)
       .attr("orient", "auto")
       .append("path")
@@ -173,9 +235,9 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     defs.append("marker")
       .attr("id", "arrow-critical")
       .attr("viewBox", "0 0 10 10")
-      .attr("refX", 10) // Tip at end
+      .attr("refX", 10) 
       .attr("refY", 5)
-      .attr("markerWidth", 8) // Doubled length
+      .attr("markerWidth", 8)
       .attr("markerHeight", 4)
       .attr("orient", "auto")
       .append("path")
@@ -207,13 +269,14 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         .data(xAxisTicks).enter().append("line")
         .attr("x1", d => currentXScale(d)).attr("x2", d => currentXScale(d))
         .attr("y1", 0).attr("y2", contentHeight)
-        .attr("stroke", STYLES.gridColor).attr("stroke-width", 1).attr("stroke-opacity", STYLES.gridOpacity);
+        .attr("stroke", STYLES.gridColor).attr("stroke-width", 1).attr("stroke-opacity", STYLES.gridOpacity)
+        .attr("stroke-dasharray", "4,4");
 
       gridGroup.selectAll(".grid-label")
         .data(xAxisTicks).enter().append("text")
         .attr("x", d => currentXScale(d)).attr("y", 20)
-        .attr("text-anchor", "middle").attr("font-size", 10).attr("fill", STYLES.gridColor)
-        .text(d => viewMode === 'year' ? d3.timeFormat("%Y")(d) : viewMode === 'month' ? d3.timeFormat("%m/%d")(d) : d3.timeFormat("%d")(d));
+        .attr("text-anchor", "middle").attr("font-size", 10).attr("fill", "#64748b")
+        .text(d => viewMode === 'year' ? d3.timeFormat("%Y年")(d) : viewMode === 'month' ? d3.timeFormat("%Y年%m月")(d) : d3.timeFormat("%Y-%m-%d")(d));
 
       // Zones
       zoneGroup.selectAll("*").remove();
@@ -228,7 +291,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         const zoneLabelGroup = zoneGroup.append("g").attr("transform", `translate(0, ${yPos})`);
         zoneLabelGroup.append("rect").attr("width", 120).attr("height", h).attr("fill", "white").attr("stroke", STYLES.zoneBorder);
         zoneLabelGroup.append("text").attr("x", 60).attr("y", h/2).attr("text-anchor", "middle").attr("dominant-baseline", "middle")
-          .attr("font-size", 14).attr("font-weight", "bold").attr("fill", STYLES.gridColor).text(zone.name);
+          .attr("font-size", 14).attr("font-weight", "bold").attr("fill", "#475569").text(zone.name);
       });
 
       // Calculate Coords
@@ -257,7 +320,6 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         const color = isCritical ? STYLES.criticalColor : STYLES.normalColor;
         const r = STYLES.nodeRadius;
 
-        // Snapping Points for Horizontal Arrow
         const arrowStartX = startX + r;
         const arrowEndX = endX - r;
 
@@ -323,8 +385,34 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
           .on("click", () => setEditingTask(task))
           .call(dragArrow);
 
-        textGroup.append("text").attr("x", (startX + endX)/2).attr("y", y - 8).attr("text-anchor", "middle")
-          .attr("font-size", 11).attr("fill", color).text(task.name).attr("cursor", "pointer").on("click", () => setEditingTask(task));
+        // ForeignObject for wrapping text
+        const textWidth = Math.max(100, Math.abs(arrowEndX - arrowStartX) + 40);
+        const fo = textGroup.append("foreignObject")
+           .attr("x", arrowStartX - 20)
+           .attr("y", y - 45)
+           .attr("width", textWidth)
+           .attr("height", 40)
+           .style("overflow", "visible");
+
+        fo.append("xhtml:div")
+           .style("display", "flex")
+           .style("flex-direction", "column")
+           .style("justify-content", "flex-end")
+           .style("align-items", "center")
+           .style("height", "100%")
+           .style("text-align", "center")
+           .style("font-size", "11px")
+           .style("line-height", "1.1")
+           .style("color", color)
+           .style("pointer-events", "all") 
+           .html(`<span class="cursor-pointer hover:font-bold hover:scale-105 transition-all select-none bg-white/60 px-1 rounded shadow-sm border border-transparent hover:border-slate-200">${task.name}</span>`);
+        
+        fo.on("click", (event) => {
+           event.stopPropagation();
+           setEditingTask(task);
+        });
+           
+        // Duration Text below
         textGroup.append("text").attr("x", (startX + endX)/2).attr("y", y + 14).attr("text-anchor", "middle")
           .attr("font-size", 10).attr("fill", "#64748b").text(task.duration).attr("cursor", "pointer").on("click", () => setEditingTask(task));
 
@@ -344,18 +432,14 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
             const cY = y;
             const gap = task.earlyStart! - (processedData.rawTasks.get(pid)?.earlyFinish || 0);
 
-            // Snapping logic for vertical lines
             let vY1 = pY; 
             let vY2 = cY;
-            // If dropping down, start from bottom of node (y+r) to top of node (y-r)
-            // If going up, start from top of node (y-r) to bottom of node (y+r)
             if (cY > pY) { vY1 += r; vY2 -= r; }
             else if (cY < pY) { vY1 -= r; vY2 += r; }
-            else { vY1 += r; vY2 += r; } // Should not happen for vertical line if Y is same
+            else { vY1 += r; vY2 += r; } 
 
             if (gap > 0) {
               const midX = cX; 
-              // Wavy Line
               const waves = Math.floor((midX - pX) / 10);
               let d = `M ${pX + r} ${pY}`;
               for(let i=0; i<waves; i++) {
@@ -363,8 +447,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
               }
               d += ` L ${midX} ${pY}`;
               
-              linkGroup.append("path").attr("d", d).attr("fill", "none").attr("stroke", "#94a3b8").attr("stroke-width", 1);
-              // Vertical drop
+              linkGroup.append("path").attr("d", d).attr("fill", "none").attr("stroke", "#94a3b8").attr("stroke-width", 1).attr("stroke-dasharray", "3,3");
               linkGroup.append("line").attr("x1", midX).attr("y1", pY + (cY > pY ? r : -r)).attr("x2", cX).attr("y2", vY2) 
                 .attr("stroke", "#94a3b8").attr("stroke-dasharray", "3,3");
                 
@@ -425,6 +508,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
       safeAnnotations.forEach(ann => {
         const g = annotationGroup.append("g")
           .attr("transform", `translate(${ann.x}, ${ann.y})`)
+          .attr("class", "annotation-group")
           .attr("cursor", "move");
         
         const dragAnn = d3.drag<SVGGElement, unknown>()
@@ -450,10 +534,9 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
                     setEditingAnnotationId(null);
                  }
               })
-              // Auto focus trick
               .each(function() { (this as HTMLInputElement).focus(); });
           } else {
-            const textEl = g.append("text").text(ann.content).attr("font-size", 14).attr("fill", "#333");
+            g.append("text").text(ann.content).attr("font-size", 14).attr("fill", "#333");
             g.append("rect").attr("x", -5).attr("y", -15).attr("width", ann.content.length * 10 + 10).attr("height", 20)
               .attr("fill", "transparent").attr("stroke", "transparent")
               .on("dblclick", () => setEditingAnnotationId(ann.id));
@@ -533,8 +616,27 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
            <button onClick={() => setActiveTool('alert')} className={`p-1.5 rounded ${activeTool === 'alert' ? 'bg-blue-100 text-blue-600' : 'text-slate-500 hover:bg-slate-100'}`} title="插入警告"><AlertTriangle size={14}/></button>
            <button onClick={() => setActiveTool('star')} className={`p-1.5 rounded ${activeTool === 'star' ? 'bg-blue-100 text-blue-600' : 'text-slate-500 hover:bg-slate-100'}`} title="插入标记"><Star size={14}/></button>
         </div>
+        <div className="h-4 w-px bg-slate-300 mx-2"></div>
+        <div className="flex gap-1">
+          <button 
+            onClick={onUndo} 
+            disabled={!canUndo}
+            className="p-1.5 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+            title="撤销 (Ctrl+Z)"
+          >
+            <Undo size={14} />
+          </button>
+          <button 
+            onClick={onRedo} 
+            disabled={!canRedo}
+            className="p-1.5 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
+            title="重做 (Ctrl+Shift+Z)"
+          >
+            <Redo size={14} />
+          </button>
+        </div>
         <div className="flex-1"></div>
-        <button className="p-1 flex items-center gap-1 text-xs bg-cyan-600 text-white px-3 py-1 rounded hover:bg-cyan-700 shadow-sm transition">
+        <button onClick={() => setShowExportModal(true)} className="p-1 flex items-center gap-1 text-xs bg-cyan-600 text-white px-3 py-1 rounded hover:bg-cyan-700 shadow-sm transition">
           <Download size={14}/> 导出
         </button>
       </div>
@@ -544,29 +646,107 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         <div ref={tooltipRef} className="absolute pointer-events-none bg-white/95 p-3 rounded shadow-xl border border-slate-200 z-50 opacity-0 transition-opacity duration-150 text-sm min-w-[180px] backdrop-blur text-left" style={{ top: 0, left: 0 }} />
       </div>
 
-      {editingTask && (
-        <div className="absolute inset-0 z-50 bg-slate-900/10 backdrop-blur-[1px] flex items-center justify-center p-4">
+      {showExportModal && (
+        <div className="absolute inset-0 z-50 bg-slate-900/40 backdrop-blur-[2px] flex items-center justify-center p-4">
           <div className="bg-white rounded-lg shadow-2xl border border-slate-200 w-full max-w-sm flex flex-col animate-in fade-in zoom-in duration-200">
-             <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-lg">
-                <h4 className="font-bold text-slate-700 flex items-center gap-2"><Edit3 size={16}/> 编辑工作属性</h4>
-                <button onClick={() => setEditingTask(null)}><X size={16}/></button>
-             </div>
-             <div className="p-4 grid gap-3">
-                <div><label className="text-xs text-slate-500">工作名称</label><input className="w-full border rounded p-1 text-sm" value={editingTask.name} onChange={e => setEditingTask({...editingTask, name: e.target.value})} /></div>
-                <div className="grid grid-cols-2 gap-2">
-                   <div><label className="text-xs text-slate-500">工期 (天)</label><input type="number" className="w-full border rounded p-1 text-sm" value={editingTask.duration} onChange={e => setEditingTask({...editingTask, duration: parseInt(e.target.value)||0})} /></div>
-                   <div><label className="text-xs text-slate-500">工区</label><input className="w-full border rounded p-1 text-sm" value={editingTask.zone||''} onChange={e => setEditingTask({...editingTask, zone: e.target.value})} /></div>
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-lg">
+              <h4 className="font-bold text-slate-700 flex items-center gap-2"><Download size={18} className="text-cyan-600"/> 导出图纸设置</h4>
+              <button onClick={() => setShowExportModal(false)} className="text-slate-400 hover:text-slate-600 transition"><X size={20}/></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-600 mb-2">导出格式</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={() => setExportFormat('pdf')}
+                    className={`flex items-center justify-center gap-2 p-3 rounded border text-sm font-medium transition ${exportFormat === 'pdf' ? 'border-cyan-500 bg-cyan-50 text-cyan-700' : 'border-slate-200 hover:bg-slate-50'}`}
+                  >
+                    <FileText size={18} /> PDF 文档
+                  </button>
+                  <button 
+                    onClick={() => setExportFormat('png')}
+                    className={`flex items-center justify-center gap-2 p-3 rounded border text-sm font-medium transition ${exportFormat === 'png' ? 'border-cyan-500 bg-cyan-50 text-cyan-700' : 'border-slate-200 hover:bg-slate-50'}`}
+                  >
+                    <ImageIcon size={18} /> PNG 图片
+                  </button>
                 </div>
-                <div><label className="text-xs text-slate-500">紧前工作 (逗号分隔)</label><input className="w-full border rounded p-1 text-sm" value={editingTask.predecessors.join(',')} onChange={e => setEditingTask({...editingTask, predecessors: e.target.value.split(',').filter(x=>x)})} /></div>
-             </div>
-             <div className="p-3 border-t bg-slate-50 rounded-b-lg flex justify-end">
-                <button onClick={() => { onUpdateTasks && onUpdateTasks(tasks.map(t => t.id === editingTask.id ? editingTask : t)); setEditingTask(null); }} className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">保存修改</button>
-             </div>
+              </div>
+              
+              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-100">
+                <input 
+                  type="checkbox" 
+                  id="includeAnnotations" 
+                  checked={includeAnnotations} 
+                  onChange={(e) => setIncludeAnnotations(e.target.checked)}
+                  className="w-4 h-4 text-cyan-600 rounded focus:ring-cyan-500"
+                />
+                <label htmlFor="includeAnnotations" className="text-sm text-slate-700 cursor-pointer select-none font-medium">包含文本和图标批注</label>
+              </div>
+            </div>
+            <div className="p-4 border-t bg-slate-50 rounded-b-lg flex justify-end gap-2">
+              <button onClick={() => setShowExportModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded transition">取消</button>
+              <button onClick={executeExport} className="bg-cyan-600 text-white px-6 py-2 rounded text-sm hover:bg-cyan-700 shadow-md transition font-medium">
+                确认导出
+              </button>
+            </div>
           </div>
         </div>
       )}
-    </div>
-  );
-};
 
-export default NetworkDiagram;
+      {editingTask && (
+        <div className="absolute inset-0 z-50 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-2xl border border-slate-200 w-full max-w-lg flex flex-col animate-in fade-in zoom-in duration-200">
+             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-lg">
+                <h4 className="font-bold text-slate-700 flex items-center gap-2 text-lg"><Edit3 size={18} className="text-blue-600"/> 编辑工作属性</h4>
+                <button onClick={() => setEditingTask(null)} className="text-slate-400 hover:text-slate-600 transition"><X size={20}/></button>
+             </div>
+             <div className="p-5 grid gap-4 overflow-y-auto max-h-[70vh]">
+                <div className="grid grid-cols-4 gap-4">
+                   <div className="col-span-1">
+                      <label className="block text-xs font-bold text-slate-500 mb-1">代号</label>
+                      <input className="w-full border border-slate-300 rounded p-2 text-sm bg-slate-100 text-slate-500 cursor-not-allowed" value={editingTask.id} disabled title="代号不可修改" />
+                   </div>
+                   <div className="col-span-3">
+                      <label className="block text-xs font-bold text-slate-500 mb-1">工作名称</label>
+                      <input className="w-full border border-slate-300 rounded p-2 text-sm font-semibold focus:ring-2 focus:ring-blue-500 outline-none" 
+                        value={editingTask.name} 
+                        onChange={e => setEditingTask({...editingTask, name: e.target.value})} 
+                        placeholder="请输入工作名称"
+                      />
+                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-md border border-slate-200">
+                   <div>
+                     <label className="block text-xs font-bold text-slate-500 mb-1">开始日期 (约束)</label>
+                     <input type="date" className="w-full border border-slate-300 rounded p-1.5 text-sm" 
+                       value={formatDateStr(editingTask.earlyStart || 0)} 
+                       onChange={e => {
+                         const days = parseDateStr(e.target.value);
+                         setEditingTask({...editingTask, constraintDate: days});
+                       }} 
+                     />
+                     <div className="text-[10px] text-slate-400 mt-1">设置此项将限制最早开始时间</div>
+                   </div>
+                   <div>
+                     <label className="block text-xs font-bold text-slate-500 mb-1">完成日期 (自动调整工期)</label>
+                     <input type="date" className="w-full border border-slate-300 rounded p-1.5 text-sm" 
+                       value={formatDateStr(editingTask.earlyFinish || 0)} 
+                       onChange={e => {
+                         const endDays = parseDateStr(e.target.value);
+                         const duration = Math.max(0, endDays - (editingTask.earlyStart || 0));
+                         setEditingTask({...editingTask, duration});
+                       }} 
+                     />
+                     <div className="text-[10px] text-slate-400 mt-1">修改完成日期会改变工期</div>
+                   </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                   <div>
+                     <label className="block text-xs font-bold text-slate-500 mb-1">工期 (天)</label>
+                     <input type="number" className="w-full border border-slate-300 rounded p-2 text-sm" value={editingTask.duration} onChange={e => setEditingTask({...editingTask, duration: parseInt(e.target.value)||0})} />
+                   </div>
+                   <div>
+                     <label className="block text-xs font-bold text-slate-500 mb-1">工区</label>
+                     <input className="w-full border border-slate-300 rounded p-2 text-sm" value={editingTask.zone||''} onChange={e => setEditingTask({...editingTask, zone: e.target.value})} list="zones" />
