@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useMemo, useState } from 'react';
 import * as d3 from 'd3';
 import { Task, LinkType, Annotation } from '../types';
-import { ZoomIn, ZoomOut, Download, Type, BoxSelect, Settings, Calendar, MousePointer2, Layers, Flag, AlertTriangle, Star, CheckCircle, Edit3, X, Undo, Redo, Save, Image as ImageIcon, FileText } from 'lucide-react';
+import { ZoomIn, ZoomOut, Download, Type, BoxSelect, Settings, Calendar, MousePointer2, Layers, Flag, AlertTriangle, Star, CheckCircle, Edit3, X, Undo, Redo, Save } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
@@ -54,11 +54,6 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
   const [activeTool, setActiveTool] = useState<'select' | 'text' | 'flag' | 'alert' | 'star' | 'check'>('select');
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
-
-  // Export State
-  const [showExportModal, setShowExportModal] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'pdf' | 'png'>('pdf');
-  const [includeAnnotations, setIncludeAnnotations] = useState(true);
 
   // Resize Observer
   useEffect(() => {
@@ -169,39 +164,17 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     return Math.round(diffTime / (1000 * 3600 * 24));
   };
 
-  const executeExport = async () => {
-    if (!containerRef.current || !svgRef.current) return;
-    
-    // Toggle annotation visibility
-    const annotationLayer = d3.select(svgRef.current).select(".annotation-layer");
-    const originalDisplay = annotationLayer.style("display");
-    
-    if (!includeAnnotations) {
-        annotationLayer.style("display", "none");
-    }
-
+  const handleExport = async () => {
+    if (!containerRef.current) return;
     try {
-        const canvas = await html2canvas(containerRef.current, { scale: 2, useCORS: true });
-        
-        if (exportFormat === 'pdf') {
-            const imgData = canvas.toDataURL('image/png');
-            const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [canvas.width, canvas.height] });
-            pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-            pdf.save(`IntelliPlan-Network-${new Date().toISOString().split('T')[0]}.pdf`);
-        } else {
-            const link = document.createElement('a');
-            link.download = `IntelliPlan-Network-${new Date().toISOString().split('T')[0]}.png`;
-            link.href = canvas.toDataURL('image/png');
-            link.click();
-        }
+        const canvas = await html2canvas(containerRef.current, { scale: 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [canvas.width, canvas.height] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('network-plan.pdf');
     } catch (e) {
         console.error("Export failed", e);
         alert("导出失败，请重试");
-    } finally {
-        if (!includeAnnotations) {
-            annotationLayer.style("display", originalDisplay);
-        }
-        setShowExportModal(false);
     }
   };
 
@@ -508,7 +481,6 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
       safeAnnotations.forEach(ann => {
         const g = annotationGroup.append("g")
           .attr("transform", `translate(${ann.x}, ${ann.y})`)
-          .attr("class", "annotation-group")
           .attr("cursor", "move");
         
         const dragAnn = d3.drag<SVGGElement, unknown>()
@@ -636,7 +608,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
           </button>
         </div>
         <div className="flex-1"></div>
-        <button onClick={() => setShowExportModal(true)} className="p-1 flex items-center gap-1 text-xs bg-cyan-600 text-white px-3 py-1 rounded hover:bg-cyan-700 shadow-sm transition">
+        <button onClick={handleExport} className="p-1 flex items-center gap-1 text-xs bg-cyan-600 text-white px-3 py-1 rounded hover:bg-cyan-700 shadow-sm transition">
           <Download size={14}/> 导出
         </button>
       </div>
@@ -645,53 +617,6 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         <svg ref={svgRef} className="w-full h-full block"></svg>
         <div ref={tooltipRef} className="absolute pointer-events-none bg-white/95 p-3 rounded shadow-xl border border-slate-200 z-50 opacity-0 transition-opacity duration-150 text-sm min-w-[180px] backdrop-blur text-left" style={{ top: 0, left: 0 }} />
       </div>
-
-      {showExportModal && (
-        <div className="absolute inset-0 z-50 bg-slate-900/40 backdrop-blur-[2px] flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-2xl border border-slate-200 w-full max-w-sm flex flex-col animate-in fade-in zoom-in duration-200">
-            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-lg">
-              <h4 className="font-bold text-slate-700 flex items-center gap-2"><Download size={18} className="text-cyan-600"/> 导出图纸设置</h4>
-              <button onClick={() => setShowExportModal(false)} className="text-slate-400 hover:text-slate-600 transition"><X size={20}/></button>
-            </div>
-            <div className="p-5 space-y-4">
-              <div>
-                <label className="block text-sm font-bold text-slate-600 mb-2">导出格式</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button 
-                    onClick={() => setExportFormat('pdf')}
-                    className={`flex items-center justify-center gap-2 p-3 rounded border text-sm font-medium transition ${exportFormat === 'pdf' ? 'border-cyan-500 bg-cyan-50 text-cyan-700' : 'border-slate-200 hover:bg-slate-50'}`}
-                  >
-                    <FileText size={18} /> PDF 文档
-                  </button>
-                  <button 
-                    onClick={() => setExportFormat('png')}
-                    className={`flex items-center justify-center gap-2 p-3 rounded border text-sm font-medium transition ${exportFormat === 'png' ? 'border-cyan-500 bg-cyan-50 text-cyan-700' : 'border-slate-200 hover:bg-slate-50'}`}
-                  >
-                    <ImageIcon size={18} /> PNG 图片
-                  </button>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-100">
-                <input 
-                  type="checkbox" 
-                  id="includeAnnotations" 
-                  checked={includeAnnotations} 
-                  onChange={(e) => setIncludeAnnotations(e.target.checked)}
-                  className="w-4 h-4 text-cyan-600 rounded focus:ring-cyan-500"
-                />
-                <label htmlFor="includeAnnotations" className="text-sm text-slate-700 cursor-pointer select-none font-medium">包含文本和图标批注</label>
-              </div>
-            </div>
-            <div className="p-4 border-t bg-slate-50 rounded-b-lg flex justify-end gap-2">
-              <button onClick={() => setShowExportModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded transition">取消</button>
-              <button onClick={executeExport} className="bg-cyan-600 text-white px-6 py-2 rounded text-sm hover:bg-cyan-700 shadow-md transition font-medium">
-                确认导出
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {editingTask && (
         <div className="absolute inset-0 z-50 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4">
@@ -750,3 +675,51 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
                    <div>
                      <label className="block text-xs font-bold text-slate-500 mb-1">工区</label>
                      <input className="w-full border border-slate-300 rounded p-2 text-sm" value={editingTask.zone||''} onChange={e => setEditingTask({...editingTask, zone: e.target.value})} list="zones" />
+                     <datalist id="zones">
+                       {processedData.zoneMeta.map(z => <option key={z.name} value={z.name} />)}
+                     </datalist>
+                   </div>
+                   <div>
+                       <label className="block text-xs font-bold text-slate-500 mb-1">类型</label>
+                       <select className="w-full border border-slate-300 rounded p-2 text-sm bg-white" value={editingTask.type} onChange={e => setEditingTask({...editingTask, type: e.target.value as LinkType})}>
+                           <option value={LinkType.Real}>实工作</option>
+                           <option value={LinkType.Virtual}>虚工作</option>
+                           <option value={LinkType.Wavy}>挂起/波形</option>
+                       </select>
+                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">父工作代号</label>
+                        <input className="w-full border border-slate-300 rounded p-2 text-sm" value={editingTask.parentId || ''} placeholder="可选，用于分组" onChange={e => setEditingTask({...editingTask, parentId: e.target.value || undefined})} />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">紧前工作</label>
+                        <input className="w-full border border-slate-300 rounded p-2 text-sm" value={editingTask.predecessors.join(',')} onChange={e => setEditingTask({...editingTask, predecessors: e.target.value.split(',').filter(x=>x)})} />
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">备注/描述</label>
+                    <textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:ring-2 focus:ring-blue-500 outline-none" 
+                      value={editingTask.description || ''} 
+                      onChange={e => setEditingTask({...editingTask, description: e.target.value})} 
+                      placeholder="输入工作备注或详细描述..."
+                    />
+                </div>
+             </div>
+             <div className="p-4 border-t bg-slate-50 rounded-b-lg flex justify-end gap-2">
+                <button onClick={() => setEditingTask(null)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded transition">取消</button>
+                <button onClick={() => { onUpdateTasks && onUpdateTasks(tasks.map(t => t.id === editingTask.id ? editingTask : t)); setEditingTask(null); }} className="bg-blue-600 text-white px-6 py-2 rounded text-sm hover:bg-blue-700 shadow-md transition font-medium flex items-center gap-2">
+                  <Save size={16} /> 保存修改
+                </button>
+             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default NetworkDiagram;
