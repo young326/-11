@@ -5,7 +5,7 @@ import ProjectList from './components/ProjectList';
 import ScheduleTable from './components/ScheduleTable';
 import NetworkDiagram from './components/NetworkDiagram';
 import AIAssistant from './components/AIAssistant';
-import { Undo, Redo } from 'lucide-react';
+import { Undo, Redo, CloudCheck, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   // --- Initial Data ---
@@ -13,6 +13,7 @@ const App: React.FC = () => {
     id: '1', 
     name: 'XX机场航站区安装施工总进度计划', 
     lastModified: Date.now(),
+    startDate: new Date().setHours(0,0,0,0) - (2 * 24 * 60 * 60 * 1000), // Default to 2 days ago
     annotations: [], 
     tasks: [
       // 一工区
@@ -46,32 +47,50 @@ const App: React.FC = () => {
   };
 
   // --- State with History for Undo/Redo ---
-  const [history, setHistory] = useState<Project[][]>([[initialProject]]);
+  const loadProjects = () => {
+    try {
+      const saved = localStorage.getItem('intelliPlan_projects');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error("Failed to load projects", e);
+    }
+    return [initialProject];
+  };
+
+  const [history, setHistory] = useState<Project[][]>([loadProjects()]);
   const [historyIndex, setHistoryIndex] = useState(0);
   
   const projects = history[historyIndex];
-  const [activeProjectId, setActiveProjectId] = useState<string>('1');
+  const [activeProjectId, setActiveProjectId] = useState<string>(projects[0]?.id || '1');
 
   // Layout State for 3 columns
   const [leftWidth, setLeftWidth] = useState(240); // Project List
   const [middleWidth, setMiddleWidth] = useState(400); // Schedule Table
   
   const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false);
   
   // Analysis State (calculated by NetworkDiagram)
   const [currentCriticalPath, setCurrentCriticalPath] = useState<string[]>([]);
   const [projectDuration, setProjectDuration] = useState(0);
 
-  // --- Shared Config ---
-  const projectStartDate = useMemo(() => {
-    const d = new Date();
-    d.setHours(0,0,0,0);
-    d.setDate(d.getDate() - 2); 
-    return d;
-  }, []);
-
   // --- Helpers ---
   const activeProject = projects.find(p => p.id === activeProjectId) || projects[0];
+
+  // --- Derived State ---
+  // Use the project's explicit start date if available, otherwise default to today
+  const projectStartDate = useMemo(() => {
+    if (activeProject.startDate) {
+      return new Date(activeProject.startDate);
+    }
+    const d = new Date();
+    d.setHours(0,0,0,0);
+    return d;
+  }, [activeProject.startDate]);
 
   // Helper: Calculate CPM (Critical Path Method)
   // We perform this here so the ScheduleTable can display calculated dates
@@ -172,6 +191,9 @@ const App: React.FC = () => {
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
         handleRedo();
         e.preventDefault();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        handleSaveToServer();
+        e.preventDefault();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -212,6 +234,7 @@ const App: React.FC = () => {
       id: crypto.randomUUID(),
       name: '新建工程项目',
       lastModified: Date.now(),
+      startDate: new Date().setHours(0,0,0,0), // Default to today
       tasks: [],
       annotations: []
     };
@@ -227,12 +250,46 @@ const App: React.FC = () => {
       setActiveProjectId(newProjects[0].id);
     }
   };
+  
+  const handleRenameProject = (id: string, newName: string) => {
+    const updatedProjects = projects.map(p => 
+      p.id === id ? { ...p, name: newName, lastModified: Date.now() } : p
+    );
+    updateProjectsWithHistory(updatedProjects);
+  };
 
-  const handleImportProject = (importedTasks: Task[]) => {
+  const handleSaveProject = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(activeProject));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `${activeProject.name}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const handleSaveToServer = async () => {
+    setIsSaving(true);
+    try {
+        // Mock server save with delay
+        await new Promise(resolve => setTimeout(resolve, 800));
+        localStorage.setItem('intelliPlan_projects', JSON.stringify(projects));
+        
+        setShowSaveSuccess(true);
+        setTimeout(() => setShowSaveSuccess(false), 2000);
+    } catch (e) {
+        alert("保存失败: " + e);
+    } finally {
+        setIsSaving(false);
+    }
+  };
+
+  const handleImportProject = (importedTasks: Task[], startDate?: number) => {
     const newProject: Project = {
       id: crypto.randomUUID(),
       name: '导入的工程 ' + new Date().toLocaleTimeString(),
       lastModified: Date.now(),
+      startDate: startDate || new Date().setHours(0,0,0,0), // Use detected start date or default to today
       tasks: importedTasks,
       annotations: []
     };
@@ -277,12 +334,19 @@ const App: React.FC = () => {
   }, [middleWidth]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden text-slate-800 font-sans">
+    <div className="flex h-screen w-screen overflow-hidden text-slate-800 font-sans relative">
       {isLoading && (
-        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center text-white flex-col">
+        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center text-white flex-col backdrop-blur-sm">
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white mb-4"></div>
           <p>AI模型正在智能识别与计算...</p>
         </div>
+      )}
+
+      {showSaveSuccess && (
+         <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-4 py-2 rounded-lg shadow-lg z-[100] flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
+            <CloudCheck size={20} />
+            <span className="font-medium">项目已成功保存到服务器</span>
+         </div>
       )}
 
       {/* 1. Project List Panel */}
@@ -294,7 +358,15 @@ const App: React.FC = () => {
           onAddProject={handleAddProject}
           onDeleteProject={handleDeleteProject}
           onImportProject={handleImportProject}
+          onRenameProject={handleRenameProject}
+          onSaveProject={handleSaveProject}
+          onSaveToServer={handleSaveToServer}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          canUndo={historyIndex > 0}
+          canRedo={historyIndex < history.length - 1}
           isLoading={isLoading}
+          isSaving={isSaving}
           setIsLoading={setIsLoading}
         />
         <div 

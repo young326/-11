@@ -1,4 +1,5 @@
 
+
 // Data models for the application
 
 export enum LinkType {
@@ -44,6 +45,7 @@ export interface Project {
   id: string;
   name: string;
   lastModified: number;
+  startDate?: number; // Project start timestamp (Local Midnight)
   tasks: Task[];
   annotations?: Annotation[]; // Added annotations support
   description?: string;
