@@ -95,7 +95,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
 
     setTimeout(() => onUpdateAnalysis(criticalPathIds, projectDuration), 0);
 
-    const zones: string[] = Array.from<string>(new Set(_tasks.map(t => t.zone || '默认分区'))).sort();
+    const zones: string[] = Array.from<string>(new Set(_tasks.map(t => t.zone || '默认区域'))).sort();
     
     const layoutData: { task: Task; laneIndex: number; globalRowIndex: number; zone: string }[] = [];
     let currentGlobalRow = 0;
@@ -104,7 +104,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
     const taskLaneMap = new Map<string, number>();
 
     zones.forEach((zone, index) => {
-      const zoneTasks = _tasks.filter(t => (t.zone || '默认分区') === zone);
+      const zoneTasks = _tasks.filter(t => (t.zone || '默认区域') === zone);
       zoneTasks.sort((a, b) => (a.earlyStart || 0) - (b.earlyStart || 0) || a.id.localeCompare(b.id));
 
       const lanes: number[] = [];
@@ -116,7 +116,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
         // Try to align with predecessor
         const directPred = task.predecessors
              .map(pid => taskMap.get(pid))
-             .find(p => p && (p.zone || '默认分区') === zone && Math.abs((p.earlyFinish || 0) - (task.earlyStart || 0)) < 0.01);
+             .find(p => p && (p.zone || '默认区域') === zone && Math.abs((p.earlyFinish || 0) - (task.earlyStart || 0)) < 0.01);
         
         if (directPred) {
             const predLane = taskLaneMap.get(directPred.id);
@@ -1232,7 +1232,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
                      <input type="number" className="w-full border border-slate-300 rounded p-2 text-sm" value={editingTask.duration} onChange={e => setEditingTask({...editingTask, duration: parseInt(e.target.value)||0})} />
                    </div>
                    <div>
-                     <label className="block text-xs font-bold text-slate-500 mb-1">工区</label>
+                     <label className="block text-xs font-bold text-slate-500 mb-1">区域</label>
                      <input className="w-full border border-slate-300 rounded p-2 text-sm" value={editingTask.zone||''} onChange={e => setEditingTask({...editingTask, zone: e.target.value})} list="zones" />
                      <datalist id="zones">
                        {processedData.zoneMeta.map(z => <option key={z.name} value={z.name} />)}

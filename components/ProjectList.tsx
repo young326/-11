@@ -1,7 +1,7 @@
 
 import React, { useRef, useState } from 'react';
 import { Project, Task } from '../types';
-import { FolderOpen, Plus, Save, Upload, Trash2, Undo, Redo, FileSpreadsheet, CloudUpload, Download } from 'lucide-react';
+import { FolderOpen, Plus, Save, Upload, Trash2, Undo, Redo, FileSpreadsheet, CloudUpload, Download, Clipboard, X } from 'lucide-react';
 import { parseScheduleFromText } from '../services/geminiService';
 import * as XLSX from 'xlsx';
 
@@ -45,6 +45,10 @@ const ProjectList: React.FC<ProjectListProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  
+  // Paste Modal State
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [pasteContent, setPasteContent] = useState("");
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -102,6 +106,32 @@ const ProjectList: React.FC<ProjectListProps> = ({
     }
   };
 
+  const handlePasteImport = async () => {
+    if (!pasteContent.trim()) {
+        setShowPasteModal(false);
+        return;
+    }
+    
+    setIsLoading(true);
+    setShowPasteModal(false);
+    
+    try {
+        // AI Service handles TSV/Excel copy paste text naturally
+        const result = await parseScheduleFromText(pasteContent);
+        if (result && result.tasks && result.tasks.length > 0) {
+            onImportProject(result.tasks, result.projectStartDate);
+        } else {
+            alert("无法从粘贴内容中识别任务数据，请确保包含工作名称、工期等关键信息。");
+        }
+    } catch(e) {
+        console.error(e);
+        alert("识别失败，请重试");
+    } finally {
+        setIsLoading(false);
+        setPasteContent("");
+    }
+  };
+
   const startEditing = (e: React.MouseEvent, project: Project) => {
     e.stopPropagation(); // Prevent selection when starting edit
     setEditingId(project.id);
@@ -116,7 +146,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-50 border-r border-slate-200">
+    <div className="h-full flex flex-col bg-slate-50 border-r border-slate-200 relative">
       <div className="p-4 bg-slate-100 border-b border-slate-200 space-y-3">
         <div className="flex justify-between items-center">
           <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider">工程项目管理</h2>
@@ -163,11 +193,19 @@ const ProjectList: React.FC<ProjectListProps> = ({
           >
             <Plus size={14} /> 新建项目
           </button>
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center justify-center gap-1 bg-emerald-600 text-white p-2 rounded text-xs hover:bg-emerald-700 transition shadow-sm"
+           <button 
+            onClick={() => setShowPasteModal(true)}
+            className="flex items-center justify-center gap-1 bg-indigo-600 text-white p-2 rounded text-xs hover:bg-indigo-700 transition shadow-sm"
+            title="复制Excel数据直接粘贴"
           >
-            <FileSpreadsheet size={14} /> 智能导入表格
+            <Clipboard size={14} /> 粘贴导入
+          </button>
+        </div>
+        <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full flex items-center justify-center gap-1 bg-white border border-slate-300 text-slate-700 p-2 rounded text-xs hover:bg-slate-50 transition shadow-sm"
+          >
+            <FileSpreadsheet size={14} /> 上传 Excel 文件
           </button>
           <input 
             type="file" 
@@ -177,9 +215,9 @@ const ProjectList: React.FC<ProjectListProps> = ({
             accept=".xlsx,.xls,.csv,.txt" 
             title="支持 Excel 自动识别"
           />
-        </div>
+        
         <div className="text-[10px] text-slate-400 text-center leading-tight">
-          支持上传 Excel 文件，AI 将自动识别时间与逻辑
+          支持从 Excel 复制数据粘贴，或上传文件
         </div>
       </div>
 
@@ -239,6 +277,39 @@ const ProjectList: React.FC<ProjectListProps> = ({
       <div className="p-2 border-t border-slate-200 text-xs text-center text-slate-400">
         双击项目名称可重命名
       </div>
+
+      {/* Paste Import Modal */}
+      {showPasteModal && (
+        <div className="absolute inset-0 z-50 bg-slate-900/10 backdrop-blur-[2px] flex items-center justify-center p-4">
+           <div className="bg-white rounded-lg shadow-2xl border border-slate-200 w-full h-full max-h-[400px] flex flex-col animate-in fade-in zoom-in duration-200">
+              <div className="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-lg">
+                  <h4 className="font-bold text-slate-700 flex items-center gap-2 text-sm">
+                      <Clipboard size={16} className="text-indigo-600"/> 粘贴 Excel 数据
+                  </h4>
+                  <button onClick={() => setShowPasteModal(false)} className="text-slate-400 hover:text-slate-600 transition"><X size={16}/></button>
+              </div>
+              <div className="flex-1 p-2 flex flex-col">
+                  <textarea 
+                    className="flex-1 w-full border border-slate-300 rounded p-2 text-xs font-mono resize-none focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="请在本地 Excel 中选中多行多列数据（包含表头，如：工作名称、工期、紧前工作等），复制后在此处粘贴..."
+                    value={pasteContent}
+                    onChange={e => setPasteContent(e.target.value)}
+                    autoFocus
+                  />
+              </div>
+              <div className="p-3 border-t bg-slate-50 rounded-b-lg flex justify-end gap-2">
+                 <button onClick={() => setShowPasteModal(false)} className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded transition">取消</button>
+                 <button 
+                    onClick={handlePasteImport}
+                    disabled={!pasteContent.trim()}
+                    className="bg-indigo-600 text-white px-4 py-1.5 rounded text-xs hover:bg-indigo-700 shadow-sm transition font-medium disabled:opacity-50"
+                 >
+                    智能识别并生成
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -39,15 +39,16 @@ export const parseScheduleFromText = async (textContext: string): Promise<{ task
     const prompt = `你是一位拥有20年经验的工程造价与进度管理专家。
       请对用户上传的工程计划数据进行深度分析、清洗和逻辑重构。
 
-      任务目标：将非结构化或半结构化的表格数据转换为符合 CPM（关键路径法）计算的双代号网络图数据。
+      任务目标：将非结构化或半结构化的表格数据（通常是 Excel 复制粘贴的文本，含制表符或逗号）转换为符合 CPM（关键路径法）计算的双代号网络图数据。
 
-      输入数据内容(JSON片段)：
+      输入数据内容（JSON/表格/文本）：
       ${textContext.substring(0, 4000)}
 
       请严格按照以下步骤进行思维链处理：
 
       1. **识别列含义**：
-         - 寻找代表“工作名称”、“工期/持续时间”、“开始时间”、“完成时间”、“紧前工作/前置任务”、“工区/分区”的列。
+         - 寻找代表“工作名称”、“工期/持续时间”、“开始时间”、“完成时间”、“紧前工作/前置任务”、“区域/分区”的列。
+         - 注意：输入可能是直接从 Excel 粘贴的，包含 Tab 分隔符或换行符。请智能识别行与列的对应关系。
       
       2. **提取日期与工期**：
          - **非常重要**：请提取“开始时间”和“完成时间”的原始字符串（格式标准化为 YYYY-MM-DD）。
@@ -56,13 +57,13 @@ export const parseScheduleFromText = async (textContext: string): Promise<{ task
       3. **智能逻辑推断**：
          - **情况A：数据中有“紧前工作”列** -> 清洗数据（去除括号、处理分隔符），直接映射。
          - **情况B：数据中无“紧前工作”列** -> 根据时间线**反推**逻辑关系：
-            - 规则：如果 Task A 的“完成时间”等于或略小于 Task B 的“开始时间”，且属于同一工序/工区，则 A 是 B 的紧前工作。
+            - 规则：如果 Task A 的“完成时间”等于或略小于 Task B 的“开始时间”，且属于同一工序/区域，则 A 是 B 的紧前工作。
             - 确保网络图尽量闭合。
 
       4. **数据标准化**：
          - **ID**：如果原数据有编号则使用，否则生成 10, 20... 格式。
          - **Type**：默认为 "Real"。
-         - **Zone**：根据内容推断工区，默认为“主体工程”。
+         - **Zone**：根据内容推断区域，默认为“主体工程”。
 
       输出要求：
       - 返回严格的 JSON 数组。
@@ -89,7 +90,7 @@ export const parseScheduleFromText = async (textContext: string): Promise<{ task
                 items: { type: Type.STRING },
                 description: "紧前工作ID列表"
               },
-              zone: { type: Type.STRING, description: "工区/分区" },
+              zone: { type: Type.STRING, description: "区域/分区" },
               type: { type: Type.STRING, enum: ["Real", "Virtual"], description: "工作类型" }
             },
             required: ["id", "name", "predecessors", "type"]

@@ -16,33 +16,33 @@ const App: React.FC = () => {
     startDate: new Date().setHours(0,0,0,0) - (2 * 24 * 60 * 60 * 1000), // Default to 2 days ago
     annotations: [], 
     tasks: [
-      // 一工区
-      { id: '10', name: '施工准备', duration: 20, predecessors: [], type: LinkType.Real, zone: '一工区' },
-      { id: '20', name: '测量放线', duration: 92, predecessors: ['10'], type: LinkType.Real, zone: '一工区' },
-      { id: '30', name: '切槽配管1', duration: 30, predecessors: ['20'], type: LinkType.Real, zone: '一工区' },
-      { id: '40', name: '灯箱安装1', duration: 90, predecessors: ['30'], type: LinkType.Real, zone: '一工区' },
-      { id: '50', name: '电缆敷设及接头制作', duration: 100, predecessors: ['40'], type: LinkType.Real, zone: '一工区' },
-      { id: '60', name: '弱电系统受压', duration: 30, predecessors: ['50'], type: LinkType.Real, zone: '一工区' },
-      { id: '70', name: '灯具安装', duration: 30, predecessors: ['60'], type: LinkType.Real, zone: '一工区' },
+      // 区域一
+      { id: '10', name: '施工准备', duration: 20, predecessors: [], type: LinkType.Real, zone: '区域一' },
+      { id: '20', name: '测量放线', duration: 92, predecessors: ['10'], type: LinkType.Real, zone: '区域一' },
+      { id: '30', name: '切槽配管1', duration: 30, predecessors: ['20'], type: LinkType.Real, zone: '区域一' },
+      { id: '40', name: '灯箱安装1', duration: 90, predecessors: ['30'], type: LinkType.Real, zone: '区域一' },
+      { id: '50', name: '电缆敷设及接头制作', duration: 100, predecessors: ['40'], type: LinkType.Real, zone: '区域一' },
+      { id: '60', name: '弱电系统受压', duration: 30, predecessors: ['50'], type: LinkType.Real, zone: '区域一' },
+      { id: '70', name: '灯具安装', duration: 30, predecessors: ['60'], type: LinkType.Real, zone: '区域一' },
       
-      // 二工区
-      { id: '80', name: '测量放线', duration: 32, predecessors: ['10'], type: LinkType.Real, zone: '二工区' },
-      { id: '90', name: '切槽配管', duration: 233, predecessors: ['80'], type: LinkType.Real, zone: '二工区' },
-      { id: '100', name: '灯箱安装', duration: 125, predecessors: ['90'], type: LinkType.Real, zone: '二工区' },
-      { id: '110', name: '电缆敷设', duration: 100, predecessors: ['100'], type: LinkType.Real, zone: '二工区' },
+      // 区域二
+      { id: '80', name: '测量放线', duration: 32, predecessors: ['10'], type: LinkType.Real, zone: '区域二' },
+      { id: '90', name: '切槽配管', duration: 233, predecessors: ['80'], type: LinkType.Real, zone: '区域二' },
+      { id: '100', name: '灯箱安装', duration: 125, predecessors: ['90'], type: LinkType.Real, zone: '区域二' },
+      { id: '110', name: '电缆敷设', duration: 100, predecessors: ['100'], type: LinkType.Real, zone: '区域二' },
       
-      // 三工区
-      { id: '120', name: '高杆灯基础施工', duration: 42, predecessors: ['10'], type: LinkType.Real, zone: '三工区' },
-      { id: '130', name: '高杆灯立及安装', duration: 44, predecessors: ['120'], type: LinkType.Real, zone: '三工区' },
-      { id: '140', name: '切槽配管', duration: 202, predecessors: ['130'], type: LinkType.Real, zone: '三工区' },
-      { id: '150', name: '配电亭安装', duration: 47, predecessors: ['140'], type: LinkType.Real, zone: '三工区' },
+      // 区域三
+      { id: '120', name: '高杆灯基础施工', duration: 42, predecessors: ['10'], type: LinkType.Real, zone: '区域三' },
+      { id: '130', name: '高杆灯立及安装', duration: 44, predecessors: ['120'], type: LinkType.Real, zone: '区域三' },
+      { id: '140', name: '切槽配管', duration: 202, predecessors: ['130'], type: LinkType.Real, zone: '区域三' },
+      { id: '150', name: '配电亭安装', duration: 47, predecessors: ['140'], type: LinkType.Real, zone: '区域三' },
       
-      // 四工区 - 关键路径部分
-      { id: '200', name: '主体结构及装饰', duration: 76, predecessors: ['10'], type: LinkType.Real, zone: '四工区' },
-      { id: '210', name: '机电管线安装', duration: 112, predecessors: ['200'], type: LinkType.Real, zone: '四工区' },
-      { id: '220', name: '机电设备安装及调试', duration: 60, predecessors: ['210'], type: LinkType.Real, zone: '四工区' },
-      { id: '230', name: '助航灯光设备调试', duration: 59, predecessors: ['220'], type: LinkType.Real, zone: '四工区' },
-      { id: '240', name: '竣工验收', duration: 5, predecessors: ['70', '110', '150', '230'], type: LinkType.Wavy, zone: '四工区' },
+      // 区域四 - 关键路径部分
+      { id: '200', name: '主体结构及装饰', duration: 76, predecessors: ['10'], type: LinkType.Real, zone: '区域四' },
+      { id: '210', name: '机电管线安装', duration: 112, predecessors: ['200'], type: LinkType.Real, zone: '区域四' },
+      { id: '220', name: '机电设备安装及调试', duration: 60, predecessors: ['210'], type: LinkType.Real, zone: '区域四' },
+      { id: '230', name: '助航灯光设备调试', duration: 59, predecessors: ['220'], type: LinkType.Real, zone: '区域四' },
+      { id: '240', name: '竣工验收', duration: 5, predecessors: ['70', '110', '150', '230'], type: LinkType.Wavy, zone: '区域四' },
     ] 
   };
 
@@ -103,7 +103,9 @@ const App: React.FC = () => {
     while(changed) {
       changed = false;
       _tasks.forEach(task => {
-        let maxES = 0;
+        // CHANGED: Initialize to -Infinity to allow start dates before Project Start (Day 0)
+        let maxES = -Infinity;
+        
         if (task.predecessors.length > 0) {
           task.predecessors.forEach(pid => {
             const p = taskMap.get(pid);
@@ -115,7 +117,16 @@ const App: React.FC = () => {
         
         // Apply manual constraint (Start No Earlier Than)
         if (task.constraintDate !== undefined) {
-          maxES = Math.max(maxES, task.constraintDate);
+          if (maxES === -Infinity) {
+              maxES = task.constraintDate;
+          } else {
+              maxES = Math.max(maxES, task.constraintDate);
+          }
+        }
+
+        // If still -Infinity (no preds, no constraint), default to 0
+        if (maxES === -Infinity) {
+          maxES = 0;
         }
 
         if (task.earlyStart !== maxES) {
@@ -126,7 +137,17 @@ const App: React.FC = () => {
       });
     }
 
-    const pDuration = Math.max(..._tasks.map(t => t.earlyFinish || 0), 0);
+    // CHANGED: Calculate Project Duration correctly even if it's negative (though rare)
+    // Find the maximum finish time across all tasks
+    let pDuration = 0;
+    if (_tasks.length > 0) {
+        const finishes = _tasks.map(t => t.earlyFinish !== undefined ? t.earlyFinish : -Infinity);
+        const maxFinish = Math.max(...finishes);
+        // If maxFinish is valid (not -Infinity), use it. otherwise 0.
+        if (maxFinish !== -Infinity) {
+            pDuration = maxFinish;
+        }
+    }
 
     // Backward Pass
     _tasks.forEach(t => { 
@@ -140,7 +161,7 @@ const App: React.FC = () => {
       _tasks.forEach(task => {
         const successors = _tasks.filter(t => t.predecessors.includes(task.id));
         if (successors.length > 0) {
-          const minLS = Math.min(...successors.map(s => s.lateStart || pDuration));
+          const minLS = Math.min(...successors.map(s => s.lateStart !== undefined ? s.lateStart : pDuration));
           if (task.lateFinish !== minLS) {
             task.lateFinish = minLS;
             task.lateStart = minLS - task.duration;
@@ -153,7 +174,7 @@ const App: React.FC = () => {
     _tasks.forEach(t => {
       const totalFloat = (t.lateStart || 0) - (t.earlyStart || 0);
       t.totalFloat = totalFloat;
-      t.isCritical = totalFloat === 0;
+      t.isCritical = Math.abs(totalFloat) < 0.001;
     });
 
     return _tasks;
@@ -220,7 +241,7 @@ const App: React.FC = () => {
       duration: 1,
       predecessors: [],
       type: LinkType.Real,
-      zone: '一工区'
+      zone: '区域一'
     };
     handleUpdateTasks([...activeProject.tasks, newTask]);
   };
@@ -382,6 +403,7 @@ const App: React.FC = () => {
             onUpdateTask={handleTaskUpdate} 
             onAddTask={handleAddTask}
             onDeleteTask={handleDeleteTask}
+            onReplaceTasks={handleUpdateTasks} // Pass bulk update function
             projectStartDate={projectStartDate}
           />
          <div 
